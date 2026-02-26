@@ -67,7 +67,27 @@ class _And(_MatchBase):
 
 @dataclass
 class StripParams:
-    pass
+    """Remove query params by exact name, glob (utm_*), or /regex/."""
+    params: List[str]
+
+    def _matches(self, name: str) -> bool:
+        for p in self.params:
+            if p == "*":
+                return True
+            if p.startswith("/") and p.endswith("/"):
+                if re.search(p[1:-1], name):
+                    return True
+            elif "*" in p or "?" in p:
+                if fnmatch.fnmatch(name, p):
+                    return True
+            elif name == p:
+                return True
+        return False
+
+    def apply(self, f: Furl) -> None:
+        to_remove = [k for k in list(f.args.keys()) if self._matches(k)]
+        for k in set(to_remove):
+            del f.args[k]
 
 
 @dataclass
