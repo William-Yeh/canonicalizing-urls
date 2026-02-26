@@ -156,6 +156,109 @@ class Rule:
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; url-canonicalizer/1.0)"}
 
 
+def _fetch_signals(url: str, timeout: int = 10) -> dict:
+    """Fetch URL and extract canonical signals."""
+    try:
+        resp = httpx.get(url, follow_redirects=True, timeout=timeout, headers=_HEADERS)
+        final_url = str(resp.url)
+        soup = BeautifulSoup(resp.text, "html.parser")
+    except Exception as e:
+        return {"final_url": url, "error": str(e)}
+
+    canonical_tag = soup.find("link", rel="canonical")
+    og_url_tag = soup.find("meta", property="og:url")
+    return {
+        "final_url": final_url,
+        "canonical": canonical_tag["href"] if canonical_tag else None,
+        "og_url": og_url_tag.get("content") if og_url_tag else None,
+        "title": soup.title.string.strip() if soup.title else None,
+    }
+
+
+def _best_canonical(signals: dict, original_url: str) -> Optional[str]:
+    """Return best canonical signal in priority order."""
+    return (signals.get("canonical")
+            or signals.get("og_url")
+            or (signals["final_url"] if signals["final_url"] != original_url else None))
+
+
+def _same_content(a: dict, b: dict) -> bool:
+    if a.get("final_url") and a["final_url"] == b.get("final_url"):
+        return True
+    if a.get("canonical") and a["canonical"] == b.get("canonical"):
+        return True
+    if a.get("og_url") and a["og_url"] == b.get("og_url"):
+        return True
+    if a.get("title") and a["title"] == b.get("title"):
+        return True
+    return False
+
+
+def probe(url: str) -> None:
+    """Differential HTTP test to suggest canonicalization rules for url."""
+    print(f"\nProbing: {url}\n")
+    base = _fetch_signals(url)
+    base_canonical = _best_canonical(base, url)
+    print(f"  Baseline canonical: {base_canonical or '(none found)'}")
+
+    original = Furl(url)
+    suggestions: list[str] = []
+
+    # --- 1. Params ---
+    if original.args:
+        no_params = Furl(url)
+        no_params.args.clear()
+        if _same_content(base, _fetch_signals(no_params.url)):
+            print("  strip ALL params → same ✓")
+            suggestions.append('StripParams(params=["*"])')
+        else:
+            strippable = []
+            for p in list(original.args.keys()):
+                test = Furl(url)
+                del test.args[p]
+                if _same_content(base, _fetch_signals(test.url)):
+                    print(f"  strip {p!r} → same ✓")
+                    strippable.append(p)
+                else:
+                    print(f"  strip {p!r} → different ✗")
+            if strippable:
+                suggestions.append(f"StripParams(params={strippable})")
+
+    # --- 2. Host ---
+    if original.host.startswith("m."):
+        www_host = "www." + original.host[2:]
+        test = Furl(url)
+        test.host = www_host
+        if _same_content(base, _fetch_signals(test.url)):
+            print(f"  rewrite host → {www_host!r} ✓")
+            suggestions.append(f'RewriteHost("{www_host}")')
+
+    # --- 3. Path ---
+    canonical_url = base_canonical or base["final_url"]
+    if canonical_url and canonical_url != url:
+        canon_path = str(Furl(canonical_url).path)
+        orig_path = str(original.path)
+        if orig_path.endswith(canon_path) and canon_path != orig_path:
+            pattern = re.sub(r"[A-Z0-9]{6,}", "[A-Z0-9]+", canon_path)
+            print(f"  extract path {canon_path!r} ✓")
+            suggestions.append(f'ExtractPath(pattern=r"{pattern}")')
+        elif orig_path.startswith(canon_path) and canon_path != orig_path:
+            removed = orig_path[len(canon_path):]
+            n = len([s for s in removed.split("/") if s])
+            print(f"  trim {n} path suffix segment(s) ✓")
+            suggestions.append(f"TrimPathSuffix(n={n})")
+
+    # --- Report ---
+    print(f"\n  Suggested rule:")
+    if suggestions:
+        print(f"    Rule(")
+        print(f"        match=Host({original.host!r}),")
+        print(f"        actions=[{', '.join(suggestions)}],")
+        print(f"    ),")
+    else:
+        print("    (no automatic suggestion — review manually)")
+
+
 def _http_resolve(url: str, timeout: int = 10) -> str:
     """Follow HTTP redirects and return final URL."""
     try:
