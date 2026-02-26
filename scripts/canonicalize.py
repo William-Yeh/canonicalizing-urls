@@ -91,6 +91,56 @@ class StripParams:
 
 
 @dataclass
+class UnwrapRedirectParam:
+    """Decode a URL-encoded redirect param; returns new URL string."""
+    key: str
+
+    def apply(self, f: Furl) -> Optional[str]:
+        val = f.args.get(self.key)
+        return unquote(str(val)) if val else None
+
+
+@dataclass
+class RewriteHost:
+    """Replace the domain."""
+    host: str
+
+    def apply(self, f: Furl) -> None:
+        f.host = self.host
+
+
+@dataclass
+class TrimPathSuffix:
+    """Remove N trailing path segments and clear query+fragment."""
+    n: int
+
+    def apply(self, f: Furl) -> None:
+        f.path.segments = f.path.segments[:-self.n]
+        f.args.clear()
+        f.remove(fragment=True)
+
+
+@dataclass
+class ExtractPath:
+    """Find first regex match in path; discard everything outside it."""
+    pattern: str
+
+    def apply(self, f: Furl) -> None:
+        m = re.search(self.pattern, str(f.path))
+        if m:
+            f.path = m.group(0)
+            f.args.clear()
+            f.remove(fragment=True)
+
+
+class StripFragment:
+    """Remove URL fragment (#...)."""
+
+    def apply(self, f: Furl) -> None:
+        f.remove(fragment=True)
+
+
+@dataclass
 class Rule:
     match: _MatchBase
     actions: list

@@ -3,7 +3,10 @@ from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
 
 from furl import furl as Furl
-from canonicalize import canonicalize, AnyHost, Host, Path, Rule, StripParams
+from canonicalize import (
+    canonicalize, AnyHost, Host, Path, Rule, StripParams,
+    UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment
+)
 
 
 def fu(url): return Furl(url)
@@ -57,3 +60,34 @@ def test_strip_multiple_patterns():
     assert "fbclid" not in f.url
     assert "utm_source" not in f.url
     assert "rdid" not in f.url
+
+
+def test_unwrap_redirect_param():
+    f = Furl("https://www.linkedin.com/learning-login/share"
+             "?account=123&redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2Fcourse")
+    new_url = UnwrapRedirectParam("redirect").apply(f)
+    assert new_url == "https://www.linkedin.com/learning/course"
+
+
+def test_rewrite_host():
+    f = Furl("https://m.facebook.com/story.php?id=123")
+    RewriteHost("www.facebook.com").apply(f)
+    assert f.url == "https://www.facebook.com/story.php?id=123"
+
+
+def test_trim_path_suffix():
+    f = Furl("https://www.linkedin.com/learning/agile/course-introduction")
+    TrimPathSuffix(n=1).apply(f)
+    assert f.url == "https://www.linkedin.com/learning/agile"
+
+
+def test_extract_path():
+    f = Furl("https://www.amazon.com/-/zh_TW/Clean-Code/dp/0132350882")
+    ExtractPath(pattern=r"/dp/[A-Z0-9]+").apply(f)
+    assert f.url == "https://www.amazon.com/dp/0132350882"
+
+
+def test_strip_fragment():
+    f = Furl("https://example.com/page#section-2")
+    StripFragment().apply(f)
+    assert f.url == "https://example.com/page"
