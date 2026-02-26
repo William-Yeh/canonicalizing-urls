@@ -72,7 +72,7 @@ class StripParams:
 
 @dataclass
 class Rule:
-    matcher: _MatchBase
+    match: _MatchBase
     actions: list
 
 
