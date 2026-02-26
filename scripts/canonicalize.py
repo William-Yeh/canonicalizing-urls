@@ -22,6 +22,64 @@ import httpx
 from bs4 import BeautifulSoup
 from furl import furl as Furl
 
+# ---------------------------------------------------------------------------
+# Match primitives
+# ---------------------------------------------------------------------------
+
+class _MatchBase:
+    def __and__(self, other: "_MatchBase") -> "_And":
+        return _And(self, other)
+
+
+class AnyHost(_MatchBase):
+    def matches(self, f: Furl) -> bool:
+        return True
+
+
+@dataclass
+class Host(_MatchBase):
+    host: str
+
+    def matches(self, f: Furl) -> bool:
+        return f.host == self.host
+
+
+@dataclass
+class Path(_MatchBase):
+    pattern: str  # glob, e.g. "/share/*"
+
+    def matches(self, f: Furl) -> bool:
+        return fnmatch.fnmatch(str(f.path), self.pattern)
+
+
+@dataclass
+class _And(_MatchBase):
+    left: _MatchBase
+    right: _MatchBase
+
+    def matches(self, f: Furl) -> bool:
+        return self.left.matches(f) and self.right.matches(f)
+
+
+# ---------------------------------------------------------------------------
+# Rule / action stubs (filled in later tasks)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StripParams:
+    pass
+
+
+@dataclass
+class Rule:
+    matcher: _MatchBase
+    actions: list
+
+
+def canonicalize(url: str, online: bool = False) -> str:
+    return url
+
+
 # --- Rules defined at bottom of file ---
 RULES: list = []
 
