@@ -87,6 +87,12 @@ def test_extract_path():
     assert f.url == "https://www.amazon.com/dp/0132350882"
 
 
+def test_trim_path_suffix_n0_is_noop():
+    f = Furl("https://example.com/learning/agile/course")
+    TrimPathSuffix(n=0).apply(f)
+    assert f.url == "https://example.com/learning/agile/course"
+
+
 def test_strip_fragment():
     f = Furl("https://example.com/page#section-2")
     StripFragment().apply(f)

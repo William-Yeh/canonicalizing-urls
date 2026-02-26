@@ -115,6 +115,8 @@ class TrimPathSuffix:
     n: int
 
     def apply(self, f: Furl) -> None:
+        if self.n <= 0:
+            return
         f.path.segments = f.path.segments[:-self.n]
         f.args.clear()
         f.remove(fragment=True)
