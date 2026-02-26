@@ -153,6 +153,18 @@ class Rule:
     actions: list
 
 
+_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; url-canonicalizer/1.0)"}
+
+
+def _http_resolve(url: str, timeout: int = 10) -> str:
+    """Follow HTTP redirects and return final URL."""
+    try:
+        resp = httpx.get(url, follow_redirects=True, timeout=timeout, headers=_HEADERS)
+        return str(resp.url)
+    except Exception:
+        return url
+
+
 def canonicalize(url: str, rules: list = None, online: bool = False) -> str:
     """Apply all matching rules to url. Returns canonical URL."""
     if rules is None:

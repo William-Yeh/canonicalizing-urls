@@ -2,10 +2,12 @@ import sys
 from pathlib import Path as _Path
 sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
 
+from unittest.mock import patch
 from furl import furl as Furl
 from canonicalize import (
     canonicalize, AnyHost, Host, Path, Rule, StripParams,
-    UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment
+    UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment,
+    FollowRedirect,
 )
 
 
@@ -134,3 +136,24 @@ def test_pipeline_linkedin_learning_login():
               "&redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2Fcourse-name"
               "%3Ftrk%3Dshare_ent_url%26shareId%3Dabc")
     assert canonicalize(before, rules=rules) == "https://www.linkedin.com/learning/course-name"
+
+
+def test_follow_redirect_restarts_pipeline():
+    rules = [
+        Rule(match=AnyHost(), actions=[StripParams(params=["rdid", "utm_*"])]),
+        Rule(match=Host("www.facebook.com") & Path("/share/*"),
+             actions=[FollowRedirect()]),
+    ]
+    resolved = "https://www.facebook.com/Page/posts/pfbid0abc?rdid=XYZ"
+    with patch("canonicalize._http_resolve", return_value=resolved):
+        result = canonicalize(
+            "https://www.facebook.com/share/p/18GKaNgTxp/",
+            rules=rules, online=True,
+        )
+    assert result == "https://www.facebook.com/Page/posts/pfbid0abc"
+
+
+def test_follow_redirect_skipped_when_offline():
+    rules = [Rule(match=AnyHost(), actions=[FollowRedirect()])]
+    url = "https://example.com/share/p/abc"
+    assert canonicalize(url, rules=rules, online=False) == url
