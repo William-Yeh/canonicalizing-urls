@@ -97,3 +97,40 @@ def test_strip_fragment():
     f = Furl("https://example.com/page#section-2")
     StripFragment().apply(f)
     assert f.url == "https://example.com/page"
+
+
+def test_pipeline_strips_fbclid():
+    rules = [Rule(match=AnyHost(), actions=[StripParams(params=["fbclid"])])]
+    assert canonicalize("https://buzzorange.com/article/?fbclid=XYZ&other=1", rules=rules) \
+        == "https://buzzorange.com/article/?other=1"
+
+def test_pipeline_all_matching_rules_run():
+    """All matching rules run, not just the first."""
+    rules = [
+        Rule(match=AnyHost(), actions=[StripParams(params=["a"])]),
+        Rule(match=AnyHost(), actions=[StripParams(params=["b"])]),
+    ]
+    assert canonicalize("https://example.com/?a=1&b=2&c=3", rules=rules) \
+        == "https://example.com/?c=3"
+
+def test_pipeline_non_matching_rule_skipped():
+    rules = [Rule(match=Host("other.com"), actions=[StripParams(params=["*"])])]
+    assert canonicalize("https://example.com/?keep=1", rules=rules) \
+        == "https://example.com/?keep=1"
+
+def test_pipeline_linkedin_learning_login():
+    rules = [
+        Rule(match=AnyHost(), actions=[StripParams(params=["fbclid", "utm_*"])]),
+        Rule(
+            match=Host("www.linkedin.com") & Path("/learning-login/share"),
+            actions=[
+                UnwrapRedirectParam("redirect"),
+                StripParams(params=["account", "forceAccount", "trk", "shareId"]),
+            ],
+        ),
+    ]
+    before = ("https://www.linkedin.com/learning-login/share"
+              "?account=352396234&forceAccount=false"
+              "&redirect=https%3A%2F%2Fwww.linkedin.com%2Flearning%2Fcourse-name"
+              "%3Ftrk%3Dshare_ent_url%26shareId%3Dabc")
+    assert canonicalize(before, rules=rules) == "https://www.linkedin.com/learning/course-name"

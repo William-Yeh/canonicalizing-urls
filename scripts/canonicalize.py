@@ -142,13 +142,39 @@ class StripFragment:
         f.remove(fragment=True)
 
 
+class FollowRedirect:
+    """Resolve URL via HTTP and restart pipeline. Requires online=True."""
+    pass
+
+
 @dataclass
 class Rule:
     match: _MatchBase
     actions: list
 
 
-def canonicalize(url: str, online: bool = False) -> str:
+def canonicalize(url: str, rules: list = None, online: bool = False) -> str:
+    """Apply all matching rules to url. Returns canonical URL."""
+    if rules is None:
+        rules = RULES
+
+    for rule in rules:
+        f = Furl(url)
+        if not rule.match.matches(f):
+            continue
+        for action in rule.actions:
+            if isinstance(action, FollowRedirect):
+                if online:
+                    return canonicalize(_http_resolve(url), rules=rules, online=online)
+                break  # skip if offline
+            new_url = action.apply(f)
+            if new_url is not None:
+                # UnwrapRedirectParam: URL replaced — switch f to new URL, continue remaining actions
+                f = Furl(new_url)
+                url = new_url
+            else:
+                url = f.url
+
     return url
 
 
