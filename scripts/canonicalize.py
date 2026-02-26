@@ -61,10 +61,6 @@ class _And(_MatchBase):
         return self.left.matches(f) and self.right.matches(f)
 
 
-# ---------------------------------------------------------------------------
-# Rule / action stubs (filled in later tasks)
-# ---------------------------------------------------------------------------
-
 @dataclass
 class StripParams:
     """Remove query params by exact name, glob (utm_*), or /regex/."""
@@ -284,7 +280,8 @@ def canonicalize(url: str, rules: list = None, online: bool = False) -> str:
                 break  # skip if offline
             new_url = action.apply(f)
             if new_url is not None:
-                # UnwrapRedirectParam: URL replaced — switch f to new URL, continue remaining actions
+                # Don't break — remaining actions (e.g. StripParams) run on the unwrapped URL,
+                # which is the intended behavior for rules like LinkedIn learning-login/share.
                 f = Furl(new_url)
                 url = new_url
             else:

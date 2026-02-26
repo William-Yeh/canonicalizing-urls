@@ -163,13 +163,16 @@ def test_builtin_rules_strip_fbclid():
     url = "https://buzzorange.com/techorange/2025/02/19/ai/?fbclid=XYZ&aem_abc=1"
     assert canonicalize(url) == "https://buzzorange.com/techorange/2025/02/19/ai/"
 
+
 def test_builtin_rules_linkedin_strip_u():
     url = "https://www.linkedin.com/learning/agile/course-introduction?u=352396234"
     assert canonicalize(url) == "https://www.linkedin.com/learning/agile/course-introduction"
 
+
 def test_builtin_rules_amazon_extract_dp():
     url = "https://www.amazon.com/-/zh_TW/Clean-Code/dp/0132350882"
     assert canonicalize(url) == "https://www.amazon.com/dp/0132350882"
+
 
 def test_builtin_rules_facebook_mobile():
     url = "https://m.facebook.com/story.php?story_fbid=9819635824716580&id=100000107794908&wtsid=rdr_0ROl"
