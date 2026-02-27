@@ -3,9 +3,9 @@ name: canonicalizing-urls
 description: >
   Use when working with any URL that may contain tracking parameters, redirect
   wrappers, locale prefixes, or opaque share links — to produce a clean,
-  canonical form. Triggers proactively when Claude uses a URL in a context where
-  cleanliness matters (saving to Notion, quoting in a document, creating a
-  hyperlink). Also triggers explicitly when the user says "canonicalize",
+  canonical form. Triggers proactively when the agent uses a URL in a context
+  where cleanliness matters (saving to Notion, quoting in a document, creating
+  a hyperlink). Also triggers explicitly when the user says "canonicalize",
   "clean this URL", "strip tracking params", or invokes /canonicalize.
 metadata:
   author: William-Yeh

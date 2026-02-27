@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Agent Skills](https://img.shields.io/badge/Agent_Skills-compatible-blueviolet)](https://agentskills.dev)
 
-A Claude Code skill that canonicalizes URLs — stripping tracking params, unwrapping redirects, normalizing hosts, extracting canonical paths, and resolving opaque short-links.
+An agent skill that canonicalizes URLs — stripping tracking params, unwrapping redirects, normalizing hosts, extracting canonical paths, and resolving opaque short-links.
 
 ## Installation
 
@@ -51,7 +51,7 @@ Copy the skill directory to your agent's skill folder:
 | Any | `mkt_tok` (Marketo), `_ke` (Klaviyo), `vgo_ee` (ActiveCampaign) |
 | `www.linkedin.com/learning-login/share` | Unwrap redirect, strip `account`/`trk`/`shareId` |
 | `www.linkedin.com` | Strip `u` param |
-| `m.*.com` | Rewrite mobile subdomain to `www.` (e.g. `m.youtube.com` → `www.youtube.com`) |
+| `m.*.com` | Rewrite mobile subdomain to `www.` (e.g. `m.youtube.com` → `www.youtube.com`, `m.facebook.com` → `www.facebook.com`) |
 | `www.facebook.com` | Keep only `v`, `story_fbid`, `id`, `set` params |
 | `www.facebook.com/share/*` | Follow redirect to real URL |
 | `share.google` | Follow redirect to real URL (then YouTube rules apply) |
@@ -59,6 +59,15 @@ Copy the skill directory to your agent's skill folder:
 | `www.amazon.com` | Extract `/dp/<ASIN>` path |
 | `www.infoq.cn` | Strip all params |
 | `mailchi.mp` | Strip all params (removes per-subscriber `e=` ID) |
+
+## Testing
+
+```bash
+uv run --group dev pytest tests/ -v
+```
+
+`tests/test_uat.py` contains a human-readable BEFORE→AFTER table that acts as
+both the regression suite and the acceptance spec for all built-in rules.
 
 ## Requirements
 

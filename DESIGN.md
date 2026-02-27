@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Claude Code skill that canonicalizes URLs — stripping tracking params,
+An agent skill that canonicalizes URLs — stripping tracking params,
 unwrapping redirects, normalizing hosts, extracting canonical paths, and
 resolving opaque short-links via HTTP.
 
@@ -239,8 +239,17 @@ always indicates a design mistake anyway.
 uv run --group dev pytest tests/ -v
 ```
 
-Tests import directly from `engine` and `rules` (via `pythonpath = ["scripts"]`
-in `pyproject.toml`). No test touches the CLI layer; `canonicalize.py` is
-covered by the `engine` tests transitively.
+Two test files, distinct purposes:
 
-The `FollowRedirect` HTTP path is tested via `unittest.mock.patch("engine._http_resolve")`.
+| File | Purpose |
+|------|---------|
+| `tests/test_canonicalize.py` | Unit tests for engine primitives and pipeline behaviour |
+| `tests/test_uat.py` | End-to-end UAT: BEFORE→AFTER tables driven against the full `RULES` list |
+
+`test_uat.py` is the living specification for built-in rules. Each table row is a
+`(description, before, after)` triple; pytest prints the description as the test ID,
+so failures are immediately human-readable.
+
+Tests import directly from `engine` and `rules` (via `pythonpath = ["scripts"]`
+in `pyproject.toml`). The `FollowRedirect` HTTP path is tested via
+`unittest.mock.patch("engine._http_resolve")`.
