@@ -7,6 +7,8 @@ description: >
   cleanliness matters (saving to Notion, quoting in a document, creating a
   hyperlink). Also triggers explicitly when the user says "canonicalize",
   "clean this URL", "strip tracking params", or invokes /canonicalize.
+metadata:
+  author: William-Yeh
 ---
 
 # canonicalizing-urls
