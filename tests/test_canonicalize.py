@@ -166,6 +166,23 @@ def test_builtin_rules_strip_fbclid():
     assert canonicalize(url, rules=RULES) == "https://buzzorange.com/techorange/2025/02/19/ai/"
 
 
+def test_builtin_rules_strip_esp_recipient_params():
+    url = "https://example.com/article?mkt_tok=ABC&_ke=def&vgo_ee=ghi&keep=1"
+    assert canonicalize(url, rules=RULES) == "https://example.com/article?keep=1"
+
+
+def test_builtin_rules_strip_facebook_share_params():
+    url = ("https://gipi.tw/llm-benchmark-in-software-engineering/"
+           "?fbclid=XYZ&sfnsn=mo&mibextid=abc&fb_source=share&fb_action_ids=123&keep=1")
+    assert canonicalize(url, rules=RULES) == \
+        "https://gipi.tw/llm-benchmark-in-software-engineering/?keep=1"
+
+
+def test_builtin_rules_mailchimp_strip_e():
+    url = "https://mailchi.mp/manny-li/063-17460036?e=143e81f948&fbclid=XYZ&sfnsn=mo"
+    assert canonicalize(url, rules=RULES) == "https://mailchi.mp/manny-li/063-17460036"
+
+
 def test_builtin_rules_linkedin_strip_u():
     url = "https://www.linkedin.com/learning/agile/course-introduction?u=352396234"
     assert canonicalize(url, rules=RULES) == "https://www.linkedin.com/learning/agile/course-introduction"
@@ -189,6 +206,16 @@ def test_builtin_rules_facebook_video():
 def test_builtin_rules_facebook_watch():
     url = "https://m.facebook.com/watch/?ref=saved&v=1455603719491961&_rdr"
     assert canonicalize(url, rules=RULES) == "https://www.facebook.com/watch/?v=1455603719491961"
+
+
+def test_builtin_rules_share_google():
+    resolved = "https://www.youtube.com/watch?v=g5W5wvyexns&si=TRACKING"
+    with patch("engine._http_resolve", return_value=resolved):
+        result = canonicalize(
+            "https://share.google/lw51K1njbxbifZ9ci",
+            rules=RULES, online=True,
+        )
+    assert result == "https://www.youtube.com/watch?v=g5W5wvyexns"
 
 
 def test_builtin_rules_facebook_mobile():

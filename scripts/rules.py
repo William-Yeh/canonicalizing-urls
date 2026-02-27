@@ -14,8 +14,12 @@ RULES: list = [
     Rule(
         match=AnyHost(),
         actions=[StripParams(params=[
-            "fbclid", "utm_*", "wts*", "aem_*", "rdid",
+            "fbclid", "sfnsn", "mibextid", "fb_*",    # Facebook/Meta
+            "utm_*", "wts*", "aem_*", "rdid",
             "_hsenc", "_hsmi", "mc_cid", "mc_eid",   # HubSpot/Mailchimp
+            "mkt_tok",                               # Marketo
+            "_ke",                                   # Klaviyo
+            "vgo_ee",                                # ActiveCampaign
         ])],
     ),
 
@@ -46,6 +50,12 @@ RULES: list = [
         actions=[FollowRedirect()],
     ),
 
+    # --- Google Share (opaque short-links → follow redirect) ---
+    Rule(
+        match=Host("share.google"),
+        actions=[FollowRedirect()],
+    ),
+
     # --- YouTube ---
     Rule(
         match=Host("m.youtube.com"),
@@ -60,6 +70,18 @@ RULES: list = [
     Rule(
         match=Host("www.amazon.com"),
         actions=[ExtractPath(pattern=r"/dp/[A-Z0-9]+")],
+    ),
+
+    # --- InfoQ China ---
+    Rule(
+        match=Host("www.infoq.cn"),
+        actions=[StripParams(params=["*"])],
+    ),
+
+    # --- Mailchimp campaign links (e= is per-subscriber recipient ID) ---
+    Rule(
+        match=Host("mailchi.mp"),
+        actions=[StripParams(params=["*"])],
     ),
 ]
 

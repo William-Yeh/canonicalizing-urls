@@ -45,12 +45,21 @@ Copy the skill directory to your agent's skill folder:
 
 | Domain | What it cleans |
 |--------|---------------|
-| Any | `fbclid`, `utm_*`, `wts*`, `aem_*`, `rdid`, HubSpot/Mailchimp params |
+| Any | `fbclid`, `sfnsn`, `mibextid`, `fb_*` (Facebook/Meta) |
+| Any | `utm_*`, `wts*`, `aem_*`, `rdid` |
+| Any | `_hsenc`, `_hsmi`, `mc_cid`, `mc_eid` (HubSpot/Mailchimp) |
+| Any | `mkt_tok` (Marketo), `_ke` (Klaviyo), `vgo_ee` (ActiveCampaign) |
 | `www.linkedin.com/learning-login/share` | Unwrap redirect, strip `account`/`trk`/`shareId` |
 | `www.linkedin.com` | Strip `u` param |
 | `m.facebook.com` | Rewrite to `www.facebook.com` |
+| `www.facebook.com` | Keep only `v`, `story_fbid`, `id`, `set` params |
 | `www.facebook.com/share/*` | Follow redirect to real URL |
+| `share.google` | Follow redirect to real URL (then YouTube rules apply) |
+| `m.youtube.com` | Rewrite to `www.youtube.com` |
+| `www.youtube.com` | Keep only `v`, `t`, `list`, `index` params |
 | `www.amazon.com` | Extract `/dp/<ASIN>` path |
+| `www.infoq.cn` | Strip all params |
+| `mailchi.mp` | Strip all params (removes per-subscriber `e=` ID) |
 
 ## Requirements
 
