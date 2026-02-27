@@ -4,7 +4,7 @@ sys.path.insert(0, str(_Path(__file__).parent.parent / "scripts"))
 
 from unittest.mock import patch
 from furl import furl as Furl
-from canonicalize import (
+from engine import (
     canonicalize, AnyHost, Host, Path, Rule, StripParams,
     UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment,
     FollowRedirect,
@@ -145,7 +145,7 @@ def test_follow_redirect_restarts_pipeline():
              actions=[FollowRedirect()]),
     ]
     resolved = "https://www.facebook.com/Page/posts/pfbid0abc?rdid=XYZ"
-    with patch("canonicalize._http_resolve", return_value=resolved):
+    with patch("engine._http_resolve", return_value=resolved):
         result = canonicalize(
             "https://www.facebook.com/share/p/18GKaNgTxp/",
             rules=rules, online=True,
