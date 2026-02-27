@@ -34,7 +34,7 @@ When the user asks to canonicalize a URL:
 When the script returns unchanged output but the URL is clearly non-canonical:
 1. `uv run scripts/canonicalize.py --probe <url>` — review suggested actions
 2. Ask user: generalize to a pattern, or keep domain-specific?
-3. Add the confirmed `Rule(...)` to `RULES` in `scripts/canonicalize.py`
+3. Add the confirmed `Rule(...)` to `RULES` in `scripts/rules.py`
    (insert after similar-domain rules, before the closing bracket)
 4. `uv run scripts/canonicalize.py <original_url>` — verify output
 5. Commit: `feat: add <domain> canonicalization rule`

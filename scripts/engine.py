@@ -3,10 +3,12 @@
 from __future__ import annotations
 import fnmatch
 import itertools
+import logging
 import re
 from dataclasses import dataclass
-from typing import List, Optional
 from urllib.parse import unquote
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from bs4 import BeautifulSoup
@@ -56,7 +58,7 @@ class _And(_MatchBase):
 # Action primitives
 # ---------------------------------------------------------------------------
 
-def _param_matches(patterns: List[str], name: str) -> bool:
+def _param_matches(patterns: list[str], name: str) -> bool:
     """Return True if name matches any pattern in patterns.
 
     Pattern syntax:
@@ -82,7 +84,7 @@ def _param_matches(patterns: List[str], name: str) -> bool:
 @dataclass
 class StripParams:
     """Remove query params matching any pattern in params."""
-    params: List[str]
+    params: list[str]
 
     def apply(self, f: Furl) -> None:
         to_remove = [k for k in list(f.args.keys()) if _param_matches(self.params, k)]
@@ -98,7 +100,7 @@ class KeepParams:
     params (allowlist). Prefer StripParams for universal/broad rules.
     Never use KeepParams in AnyHost() rules — validate_rules() will catch it.
     """
-    params: List[str]
+    params: list[str]
 
     def apply(self, f: Furl) -> None:
         to_remove = [k for k in list(f.args.keys()) if not _param_matches(self.params, k)]
@@ -111,7 +113,7 @@ class UnwrapRedirectParam:
     """Decode a URL-encoded redirect param; returns new URL string."""
     key: str
 
-    def apply(self, f: Furl) -> Optional[str]:
+    def apply(self, f: Furl) -> str | None:
         val = f.args.get(self.key)
         return unquote(str(val)) if val else None
 
@@ -230,7 +232,8 @@ def _http_resolve(url: str, timeout: int = 10) -> str:
     try:
         resp = httpx.get(url, follow_redirects=True, timeout=timeout, headers=_HEADERS)
         return str(resp.url)
-    except Exception:
+    except Exception as exc:
+        logger.debug("_http_resolve failed for %s: %s", url, exc)
         return url
 
 
@@ -240,8 +243,9 @@ def _fetch_signals(url: str, timeout: int = 10) -> dict:
         resp = httpx.get(url, follow_redirects=True, timeout=timeout, headers=_HEADERS)
         final_url = str(resp.url)
         soup = BeautifulSoup(resp.text, "html.parser")
-    except Exception as e:
-        return {"final_url": url, "error": str(e)}
+    except Exception as exc:
+        logger.debug("_fetch_signals failed for %s: %s", url, exc)
+        return {"final_url": url, "error": str(exc)}
 
     canonical_tag = soup.find("link", rel="canonical")
     og_url_tag = soup.find("meta", property="og:url")
@@ -253,7 +257,7 @@ def _fetch_signals(url: str, timeout: int = 10) -> dict:
     }
 
 
-def _best_canonical(signals: dict, original_url: str) -> Optional[str]:
+def _best_canonical(signals: dict, original_url: str) -> str | None:
     """Return best canonical signal in priority order."""
     return (signals.get("canonical")
             or signals.get("og_url")
@@ -276,11 +280,11 @@ def _same_content(a: dict, b: dict) -> bool:
 # Pipeline
 # ---------------------------------------------------------------------------
 
-def canonicalize(url: str, rules: list = None, online: bool = False) -> str:
+def canonicalize(url: str, rules: list[Rule], online: bool = False, _depth: int = 0) -> str:
     """Apply all matching rules to url. Returns canonical URL."""
-    if rules is None:
-        from rules import RULES
-        rules = RULES
+    if _depth > 10:
+        logger.debug("canonicalize: max redirect depth reached for %s", url)
+        return url
 
     for rule in rules:
         f = Furl(url)
@@ -289,7 +293,9 @@ def canonicalize(url: str, rules: list = None, online: bool = False) -> str:
         for action in rule.actions:
             if isinstance(action, FollowRedirect):
                 if online:
-                    return canonicalize(_http_resolve(url), rules=rules, online=online)
+                    return canonicalize(
+                        _http_resolve(url), rules=rules, online=online, _depth=_depth + 1
+                    )
                 break  # skip if offline
             new_url = action.apply(f)
             if new_url is not None:

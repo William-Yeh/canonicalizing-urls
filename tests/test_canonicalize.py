@@ -10,6 +10,7 @@ from engine import (
     UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment,
     FollowRedirect, validate_rules,
 )
+from rules import RULES
 
 
 def fu(url): return Furl(url)
@@ -162,37 +163,37 @@ def test_follow_redirect_skipped_when_offline():
 
 def test_builtin_rules_strip_fbclid():
     url = "https://buzzorange.com/techorange/2025/02/19/ai/?fbclid=XYZ&aem_abc=1"
-    assert canonicalize(url) == "https://buzzorange.com/techorange/2025/02/19/ai/"
+    assert canonicalize(url, rules=RULES) == "https://buzzorange.com/techorange/2025/02/19/ai/"
 
 
 def test_builtin_rules_linkedin_strip_u():
     url = "https://www.linkedin.com/learning/agile/course-introduction?u=352396234"
-    assert canonicalize(url) == "https://www.linkedin.com/learning/agile/course-introduction"
+    assert canonicalize(url, rules=RULES) == "https://www.linkedin.com/learning/agile/course-introduction"
 
 
 def test_builtin_rules_amazon_extract_dp():
     url = "https://www.amazon.com/-/zh_TW/Clean-Code/dp/0132350882"
-    assert canonicalize(url) == "https://www.amazon.com/dp/0132350882"
+    assert canonicalize(url, rules=RULES) == "https://www.amazon.com/dp/0132350882"
 
 
 def test_builtin_rules_youtube_mobile():
     url = "https://m.youtube.com/live/MpmrNaxW_O4?app=desktop&si=4gxzf3-pP2jh5yw_&t=274s"
-    assert canonicalize(url) == "https://www.youtube.com/live/MpmrNaxW_O4?t=274s"
+    assert canonicalize(url, rules=RULES) == "https://www.youtube.com/live/MpmrNaxW_O4?t=274s"
 
 
 def test_builtin_rules_facebook_video():
     url = "https://m.facebook.com/kerwei.chien/videos/1371674297242802/?idorvanity=263406633764528"
-    assert canonicalize(url) == "https://www.facebook.com/kerwei.chien/videos/1371674297242802/"
+    assert canonicalize(url, rules=RULES) == "https://www.facebook.com/kerwei.chien/videos/1371674297242802/"
 
 
 def test_builtin_rules_facebook_watch():
     url = "https://m.facebook.com/watch/?ref=saved&v=1455603719491961&_rdr"
-    assert canonicalize(url) == "https://www.facebook.com/watch/?v=1455603719491961"
+    assert canonicalize(url, rules=RULES) == "https://www.facebook.com/watch/?v=1455603719491961"
 
 
 def test_builtin_rules_facebook_mobile():
     url = "https://m.facebook.com/story.php?story_fbid=9819635824716580&id=100000107794908&wtsid=rdr_0ROl"
-    result = canonicalize(url)
+    result = canonicalize(url, rules=RULES)
     assert result.startswith("https://www.facebook.com/")
     assert "story_fbid=9819635824716580" in result  # content param preserved
     assert "id=100000107794908" in result            # content param preserved
