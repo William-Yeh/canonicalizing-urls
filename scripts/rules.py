@@ -5,8 +5,9 @@ For rule syntax, see engine.py and DESIGN.md.
 """
 
 from engine import (
-    AnyHost, ExtractPath, FollowRedirect, Host, KeepParams, Path,
-    RewriteHost, Rule, StripParams, UnwrapRedirectParam, validate_rules,
+    AnyHost, ExtractPath, FollowRedirect, Host, HostGlob, KeepParams, Path,
+    RewriteHost, RewriteHostPrefix, Rule, StripParams, UnwrapRedirectParam,
+    validate_rules,
 )
 
 RULES: list = [
@@ -21,6 +22,12 @@ RULES: list = [
             "_ke",                                   # Klaviyo
             "vgo_ee",                                # ActiveCampaign
         ])],
+    ),
+
+    # --- Mobile subdomain normalization (m.*.com → www.*.com) ---
+    Rule(
+        match=HostGlob("m.*.com"),
+        actions=[RewriteHostPrefix("m.", "www.")],
     ),
 
     # --- LinkedIn ---
@@ -38,10 +45,6 @@ RULES: list = [
 
     # --- Facebook ---
     Rule(
-        match=Host("m.facebook.com"),
-        actions=[RewriteHost("www.facebook.com")],
-    ),
-    Rule(
         match=Host("www.facebook.com"),
         actions=[KeepParams(params=["v", "story_fbid", "id", "set"])],
     ),
@@ -57,10 +60,6 @@ RULES: list = [
     ),
 
     # --- YouTube ---
-    Rule(
-        match=Host("m.youtube.com"),
-        actions=[RewriteHost("www.youtube.com")],
-    ),
     Rule(
         match=Host("www.youtube.com"),
         actions=[KeepParams(params=["v", "t", "list", "index"])],

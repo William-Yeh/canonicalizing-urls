@@ -38,6 +38,14 @@ class Host(_MatchBase):
 
 
 @dataclass
+class HostGlob(_MatchBase):
+    pattern: str  # fnmatch glob, e.g. "m.*.com"
+
+    def matches(self, f: Furl) -> bool:
+        return fnmatch.fnmatch(f.host, self.pattern)
+
+
+@dataclass
 class Path(_MatchBase):
     pattern: str  # glob, e.g. "/share/*"
 
@@ -125,6 +133,17 @@ class RewriteHost:
 
     def apply(self, f: Furl) -> None:
         f.host = self.host
+
+
+@dataclass
+class RewriteHostPrefix:
+    """Replace a host prefix. No-op if host doesn't start with old."""
+    old: str
+    new: str
+
+    def apply(self, f: Furl) -> None:
+        if f.host.startswith(self.old):
+            f.host = self.new + f.host[len(self.old):]
 
 
 @dataclass

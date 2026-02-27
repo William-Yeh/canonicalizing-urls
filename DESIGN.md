@@ -57,6 +57,7 @@ Rule(
 |-----------|---------|
 | `AnyHost()` | Every URL |
 | `Host("x.com")` | Exact host |
+| `HostGlob("m.*.com")` | Glob host (`fnmatch`) |
 | `Path("/foo/*")` | Glob path (`fnmatch`) |
 | `A & B` | Both conditions (`_And`) |
 
@@ -67,7 +68,8 @@ Rule(
 | `StripParams(params=[…])` | no | Remove query params matching patterns (denylist) |
 | `KeepParams(params=[…])` | no | Remove all query params EXCEPT those matching patterns (allowlist) |
 | `UnwrapRedirectParam("key")` | no | URL-decode redirect param → new URL |
-| `RewriteHost("x.com")` | no | Replace domain |
+| `RewriteHost("x.com")` | no | Replace domain with a fixed value |
+| `RewriteHostPrefix("m.", "www.")` | no | Replace host prefix (e.g. mobile → desktop) |
 | `TrimPathSuffix(n=N)` | no | Remove N trailing path segments |
 | `ExtractPath(pattern=r"…")` | no | Regex-extract path sub-segment |
 | `StripFragment()` | no | Remove `#fragment` |
@@ -199,6 +201,7 @@ check if those host sets can overlap:
 
 - `AnyHost()` → `{"*"}` (unconstrained — overlaps with everything)
 - `Host("x.com")` → `{"x.com"}`
+- `HostGlob("m.*.com")` → `{"*"}` (conservative — treated as unconstrained)
 - `_And(Host("x.com"), Path("/foo"))` → `{"x.com"}` (Path doesn't constrain host)
 
 This check is **conservative at the host level**: two `KeepParams` rules with

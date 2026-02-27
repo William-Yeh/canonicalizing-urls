@@ -51,11 +51,10 @@ Copy the skill directory to your agent's skill folder:
 | Any | `mkt_tok` (Marketo), `_ke` (Klaviyo), `vgo_ee` (ActiveCampaign) |
 | `www.linkedin.com/learning-login/share` | Unwrap redirect, strip `account`/`trk`/`shareId` |
 | `www.linkedin.com` | Strip `u` param |
-| `m.facebook.com` | Rewrite to `www.facebook.com` |
+| `m.*.com` | Rewrite mobile subdomain to `www.` (e.g. `m.youtube.com` → `www.youtube.com`) |
 | `www.facebook.com` | Keep only `v`, `story_fbid`, `id`, `set` params |
 | `www.facebook.com/share/*` | Follow redirect to real URL |
 | `share.google` | Follow redirect to real URL (then YouTube rules apply) |
-| `m.youtube.com` | Rewrite to `www.youtube.com` |
 | `www.youtube.com` | Keep only `v`, `t`, `list`, `index` params |
 | `www.amazon.com` | Extract `/dp/<ASIN>` path |
 | `www.infoq.cn` | Strip all params |
