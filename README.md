@@ -58,4 +58,4 @@ Copy the skill directory to your agent's skill folder:
 
 ## License
 
-Apache-2.0 © 2026 William Yeh
+Apache-2.0 © 2026 William Yeh <william.yeh@gmail.com>

@@ -5,8 +5,8 @@ For rule syntax, see engine.py and DESIGN.md.
 """
 
 from engine import (
-    AnyHost, ExtractPath, FollowRedirect, Host, Path,
-    RewriteHost, Rule, StripParams, UnwrapRedirectParam,
+    AnyHost, ExtractPath, FollowRedirect, Host, KeepParams, Path,
+    RewriteHost, Rule, StripParams, UnwrapRedirectParam, validate_rules,
 )
 
 RULES: list = [
@@ -38,8 +38,22 @@ RULES: list = [
         actions=[RewriteHost("www.facebook.com")],
     ),
     Rule(
+        match=Host("www.facebook.com"),
+        actions=[KeepParams(params=["v", "story_fbid", "id", "set"])],
+    ),
+    Rule(
         match=Host("www.facebook.com") & Path("/share/*"),
         actions=[FollowRedirect()],
+    ),
+
+    # --- YouTube ---
+    Rule(
+        match=Host("m.youtube.com"),
+        actions=[RewriteHost("www.youtube.com")],
+    ),
+    Rule(
+        match=Host("www.youtube.com"),
+        actions=[KeepParams(params=["v", "t", "list", "index"])],
     ),
 
     # --- Amazon ---
@@ -48,3 +62,5 @@ RULES: list = [
         actions=[ExtractPath(pattern=r"/dp/[A-Z0-9]+")],
     ),
 ]
+
+validate_rules(RULES)  # bootstrap lint: raises ValueError on conflicting KeepParams

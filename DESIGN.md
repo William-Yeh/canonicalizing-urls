@@ -64,7 +64,8 @@ Rule(
 
 | Action | Network? | Effect |
 |--------|----------|--------|
-| `StripParams(params=[…])` | no | Remove query params (exact / glob / regex) |
+| `StripParams(params=[…])` | no | Remove query params matching patterns (denylist) |
+| `KeepParams(params=[…])` | no | Remove all query params EXCEPT those matching patterns (allowlist) |
 | `UnwrapRedirectParam("key")` | no | URL-decode redirect param → new URL |
 | `RewriteHost("x.com")` | no | Replace domain |
 | `TrimPathSuffix(n=N)` | no | Remove N trailing path segments |
@@ -159,6 +160,52 @@ probe(url):
 Implemented in `_fetch_signals()` (httpx + BeautifulSoup) and `_same_content()`.
 
 ---
+
+## StripParams vs KeepParams
+
+Both actions share the same pattern syntax (exact, glob, regex). They are
+complementary — use whichever produces a shorter, clearer rule.
+
+| | `StripParams` | `KeepParams` |
+|---|---|---|
+| Model | Denylist — name the bad params | Allowlist — name the good params |
+| Use when | You know the tracking params to remove | You know the content params to keep |
+| Scope | Universal or broad rules | Domain-specific rules only |
+| Future-proof | No — new tracking params slip through | Yes — new tracking params stripped automatically |
+
+**Convention:** Use `StripParams` in `AnyHost()` rules. Use `KeepParams` only
+in `Host("x.com")` rules where you can enumerate all meaningful params.
+
+### Interaction between the two
+
+When both fire on the same URL (across different rules), `KeepParams` always
+dominates — it strips everything not in its allowlist, making any earlier
+`StripParams` redundant but harmless. This means universal `StripParams` rules
+and domain-specific `KeepParams` rules compose cleanly with no ordering concern.
+
+The only destructive case is **two `KeepParams` rules matching the same URL**:
+each strips what the other kept, leaving no params. The bootstrap lint check
+prevents this.
+
+## Bootstrap Lint Check
+
+`validate_rules(rules)` is called automatically at the bottom of `rules.py`
+on import. It raises `ValueError` if two `KeepParams` rules can match the
+same URL.
+
+**Algorithm:** For each pair of rules that both contain a `KeepParams` action,
+extract the host constraint from each matcher (`_hosts_from_matcher`), then
+check if those host sets can overlap:
+
+- `AnyHost()` → `{"*"}` (unconstrained — overlaps with everything)
+- `Host("x.com")` → `{"x.com"}`
+- `_And(Host("x.com"), Path("/foo"))` → `{"x.com"}` (Path doesn't constrain host)
+
+This check is **conservative at the host level**: two `KeepParams` rules with
+the same host but non-overlapping paths (e.g. `/a/*` vs `/b/*`) are still
+flagged. This is intentional — the path-level overlap analysis would be
+complex and error-prone, and having two `KeepParams` for the same host almost
+always indicates a design mistake anyway.
 
 ## Adding a New Rule
 

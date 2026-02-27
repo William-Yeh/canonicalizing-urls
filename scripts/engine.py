@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import fnmatch
+import itertools
 import re
 from dataclasses import dataclass
 from typing import List, Optional
@@ -55,27 +56,52 @@ class _And(_MatchBase):
 # Action primitives
 # ---------------------------------------------------------------------------
 
+def _param_matches(patterns: List[str], name: str) -> bool:
+    """Return True if name matches any pattern in patterns.
+
+    Pattern syntax:
+      "*"          — match everything
+      "utm_*"      — fnmatch glob
+      "/^custom_/" — regex (delimited by /)
+      "exact"      — literal match
+    """
+    for p in patterns:
+        if p == "*":
+            return True
+        if p.startswith("/") and p.endswith("/"):
+            if re.search(p[1:-1], name):
+                return True
+        elif "*" in p or "?" in p:
+            if fnmatch.fnmatch(name, p):
+                return True
+        elif name == p:
+            return True
+    return False
+
+
 @dataclass
 class StripParams:
-    """Remove query params by exact name, glob (utm_*), or /regex/."""
+    """Remove query params matching any pattern in params."""
     params: List[str]
 
-    def _matches(self, name: str) -> bool:
-        for p in self.params:
-            if p == "*":
-                return True
-            if p.startswith("/") and p.endswith("/"):
-                if re.search(p[1:-1], name):
-                    return True
-            elif "*" in p or "?" in p:
-                if fnmatch.fnmatch(name, p):
-                    return True
-            elif name == p:
-                return True
-        return False
+    def apply(self, f: Furl) -> None:
+        to_remove = [k for k in list(f.args.keys()) if _param_matches(self.params, k)]
+        for k in set(to_remove):
+            del f.args[k]
+
+
+@dataclass
+class KeepParams:
+    """Remove all query params EXCEPT those matching patterns in params.
+
+    Use in domain-specific rules where you know the full set of meaningful
+    params (allowlist). Prefer StripParams for universal/broad rules.
+    Never use KeepParams in AnyHost() rules — validate_rules() will catch it.
+    """
+    params: List[str]
 
     def apply(self, f: Furl) -> None:
-        to_remove = [k for k in list(f.args.keys()) if self._matches(k)]
+        to_remove = [k for k in list(f.args.keys()) if not _param_matches(self.params, k)]
         for k in set(to_remove):
             del f.args[k]
 
@@ -141,6 +167,55 @@ class FollowRedirect:
 class Rule:
     match: _MatchBase
     actions: list
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap lint check
+# ---------------------------------------------------------------------------
+
+def _hosts_from_matcher(matcher: _MatchBase) -> frozenset:
+    """Return the set of hosts that can match. '*' means unconstrained."""
+    if isinstance(matcher, AnyHost):
+        return frozenset(["*"])
+    if isinstance(matcher, Host):
+        return frozenset([matcher.host])
+    if isinstance(matcher, _And):
+        left = _hosts_from_matcher(matcher.left)
+        right = _hosts_from_matcher(matcher.right)
+        # _And is more specific — if one side constrains the host, prefer it
+        if left == frozenset(["*"]):
+            return right
+        if right == frozenset(["*"]):
+            return left
+        return left & right  # intersection (empty if different hosts — impossible match)
+    return frozenset(["*"])  # unknown matcher → conservative
+
+
+def _rules_can_overlap(a: Rule, b: Rule) -> bool:
+    """True if rules a and b can match the same URL (conservative heuristic)."""
+    ha = _hosts_from_matcher(a.match)
+    hb = _hosts_from_matcher(b.match)
+    if "*" in ha or "*" in hb:
+        return True
+    return bool(ha & hb)
+
+
+def validate_rules(rules: list) -> None:
+    """Bootstrap lint: raise ValueError if two KeepParams rules can overlap.
+
+    Two overlapping KeepParams rules are destructive — each strips what the
+    other kept, leaving no params. Called automatically at the bottom of
+    rules.py on import.
+    """
+    keep_rules = [(i, r) for i, r in enumerate(rules)
+                  if any(isinstance(a, KeepParams) for a in r.actions)]
+    for (i, ri), (j, rj) in itertools.combinations(keep_rules, 2):
+        if _rules_can_overlap(ri, rj):
+            raise ValueError(
+                f"Conflicting KeepParams: rules[{i}] and rules[{j}] can match "
+                f"the same URL. Use KeepParams only in domain-specific rules "
+                f"(Host(...)), never in AnyHost() or overlapping rules."
+            )
 
 
 # ---------------------------------------------------------------------------
