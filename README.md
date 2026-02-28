@@ -69,6 +69,8 @@ uv run --group dev pytest tests/ -v
 `tests/test_uat.py` contains a human-readable BEFORE→AFTER table that acts as
 both the regression suite and the acceptance spec for all built-in rules.
 
+For performance benchmarks and complexity verification, see [BENCHMARK.md](BENCHMARK.md).
+
 ## Requirements
 
 - `uv` (for running the script with inline deps)

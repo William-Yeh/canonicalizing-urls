@@ -251,12 +251,13 @@ def validate_rules(rules: list) -> None:
 def _glob_to_inner_regex(pattern: str) -> str:
     """Convert fnmatch glob to a regex fragment safe for re2/re fullmatch().
 
-    fnmatch.translate() returns '(?s:PAT)\\Z' (Python ≥3.12). Strip \\Z
-    because fullmatch() anchors both ends, and re2 does not support \\Z.
+    fnmatch.translate() returns '(?s:PAT)\\Z' (Python ≥3.12) or '(?s:PAT)\\z'
+    (Python ≥3.14). Strip the trailing anchor because fullmatch() already
+    anchors both ends, and re2 supports neither \\Z nor \\z.
     The (?s:...) inline-DOTALL group is preserved — re2 supports it.
     """
     t = fnmatch.translate(pattern)
-    if t.endswith("\\Z"):
+    if t.endswith("\\Z") or t.endswith("\\z"):
         t = t[:-2]
     return t
 
@@ -283,6 +284,7 @@ class _RuleIndex:
         self._exact: dict[str, set[int]] = {}
         self._globs: list[tuple[int, str]] = []  # (rule_idx, glob_pattern)
         self._glob_re: re.Pattern[str] | None = None  # re2.Pattern if google-re2 installed
+        self._group_to_rule: dict[str, int] = {}  # group name → rule index
 
         for i, rule in enumerate(rules):
             m = rule.match
@@ -299,22 +301,28 @@ class _RuleIndex:
                         self._exact.setdefault(h, set()).add(i)
 
         if self._globs:
-            self._glob_re = _glob_re_module.compile(
-                "(?i)" + "|".join(
-                    f"(?P<g{j}>{_glob_to_inner_regex(pat)})"
-                    for j, (_, pat) in enumerate(self._globs)
-                ),
-            )
+            parts = []
+            for j, (rule_idx, pat) in enumerate(self._globs):
+                group = f"g{j}"
+                self._group_to_rule[group] = rule_idx
+                parts.append(f"(?P<{group}>{_glob_to_inner_regex(pat)})")
+            self._glob_re = _glob_re_module.compile("(?i)" + "|".join(parts))
 
-    def candidate_indices(self, host: str) -> frozenset[int]:
-        """Rule indices that could match this host, used as a pre-filter."""
+    def candidate_indices(self, host: str | None) -> frozenset[int]:
+        """Rule indices that could match this host, used as a pre-filter.
+
+        If host is None (URL has no host component), only AnyHost() rules are
+        returned — exact and glob buckets require a concrete hostname.
+        """
+        if host is None:
+            return frozenset(self._universal)
         indices = set(self._universal)
         indices.update(self._exact.get(host, set()))
         if self._glob_re is not None:
             m = self._glob_re.fullmatch(host)
             if m:
                 indices.update(
-                    self._globs[int(k[1:])][0]
+                    self._group_to_rule[k]
                     for k, v in m.groupdict().items()
                     if v is not None
                 )
@@ -386,7 +394,9 @@ def canonicalize(
     rules: list[Rule],
     online: bool = False,
     _depth: int = 0,
-    _index: _RuleIndex | None = None,
+    _index: _RuleIndex | None = None,  # internal: passed through FollowRedirect recursion;
+                                        # passing an index built from a *different* rules list
+                                        # will silently apply wrong candidates.
 ) -> str:
     """Apply all matching rules to url. Returns canonical URL."""
     if _depth > 10:
@@ -398,14 +408,15 @@ def canonicalize(
 
     prev_host: str | None = None
     candidates: frozenset[int] = frozenset()
+    current_host: str | None = Furl(url).host  # one-time parse; updated after host-changing actions
 
     for i, rule in enumerate(rules):
-        f = Furl(url)
-        if f.host != prev_host:
-            candidates = _index.candidate_indices(f.host)
-            prev_host = f.host
+        if current_host != prev_host:
+            candidates = _index.candidate_indices(current_host)
+            prev_host = current_host
         if i not in candidates:
             continue
+        f = Furl(url)  # only instantiated for candidate rules
         if not rule.match.matches(f):
             continue
         for action in rule.actions:
@@ -424,6 +435,7 @@ def canonicalize(
                 url = new_url
             else:
                 url = f.url
+        current_host = f.host  # pick up host changes from RewriteHost / RewriteHostPrefix
 
     return url
 

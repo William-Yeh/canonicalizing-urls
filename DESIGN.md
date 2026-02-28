@@ -15,8 +15,15 @@ scripts/
   engine.py        ← primitives, pipeline, probe algorithm
   rules.py         ← RULES list (the one file that grows)
   canonicalize.py  ← PEP 723 entry point + thin click CLI
+  gen_figures.py   ← PEP 723 script; regenerates figures/ from benchmark data
 tests/
-  test_canonicalize.py
+  test_canonicalize.py  ← unit tests for engine primitives and pipeline
+  test_uat.py           ← end-to-end BEFORE→AFTER acceptance table
+  perf_bench.py         ← complexity benchmarks with ratio-based assertions
+figures/
+  bench1.png … bench4.png   ← individual benchmark charts
+  bench_overview.png         ← 2×2 overview of all four benchmarks
+BENCHMARK.md       ← benchmark goals, design, results, and insights
 SKILL.md           ← triggering conditions + Claude workflows
 ```
 
@@ -27,9 +34,11 @@ SKILL.md           ← triggering conditions + Claude workflows
 | `engine.py` | Rule language + execution | Adding new primitive types |
 | `rules.py` | Domain-specific rules | Adding support for a new site |
 | `canonicalize.py` | CLI glue | Changing CLI flags |
+| `perf_bench.py` | Complexity verification | Benchmarking methodology changes |
+| `gen_figures.py` | Figure generation | Measurements updated or new charts needed |
 
-`canonicalize.py` holds the PEP 723 `# /// script` inline-deps header so it
-can be executed directly via `uv run scripts/canonicalize.py <url>` with zero
+`canonicalize.py` and `gen_figures.py` hold the PEP 723 `# /// script`
+inline-deps header so they can be executed directly via `uv run` with zero
 setup. `engine.py` and `rules.py` are plain Python modules loaded via
 `sys.path.insert`.
 
@@ -212,6 +221,8 @@ always indicates a design mistake anyway.
 
 ## Rule Indexing
 
+> Performance verification: [BENCHMARK.md](BENCHMARK.md)
+
 `canonicalize()` builds a `_RuleIndex` on the first call and passes it through
 recursive `FollowRedirect` calls to avoid rebuilding.
 
@@ -241,8 +252,8 @@ All `HostGlob` patterns are merged into one compiled regex at index
 construction time using `fnmatch.translate()` + named capture groups:
 
 ```python
-# fnmatch.translate("m.*.com") → '(?s:m\\..*\\.com)\\Z'
-# Strip \\Z (re2 lacks it; fullmatch anchors both ends)
+# fnmatch.translate("m.*.com") → '(?s:m\\..*\\.com)\\Z'  (\\z in Python ≥3.14)
+# Strip the trailing anchor (re2 supports neither; fullmatch anchors both ends)
 _glob_re = re2.compile("(?i)(?P<g0>(?s:m\\..*\\.com))|...")
 ```
 
