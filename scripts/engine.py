@@ -14,6 +14,11 @@ import httpx
 from bs4 import BeautifulSoup
 from furl import furl as Furl
 
+try:
+    import re2 as _glob_re_module  # google-re2: true DFA, O(L) host matching
+except ImportError:
+    import re as _glob_re_module  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
 # Match primitives
@@ -240,6 +245,83 @@ def validate_rules(rules: list) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Rule index
+# ---------------------------------------------------------------------------
+
+def _glob_to_inner_regex(pattern: str) -> str:
+    """Convert fnmatch glob to a regex fragment safe for re2/re fullmatch().
+
+    fnmatch.translate() returns '(?s:PAT)\\Z' (Python ≥3.12). Strip \\Z
+    because fullmatch() anchors both ends, and re2 does not support \\Z.
+    The (?s:...) inline-DOTALL group is preserved — re2 supports it.
+    """
+    t = fnmatch.translate(pattern)
+    if t.endswith("\\Z"):
+        t = t[:-2]
+    return t
+
+
+class _RuleIndex:
+    """Host-keyed index that reduces per-rule match checks in canonicalize().
+
+    Three buckets built once at construction time:
+      universal  AnyHost() rules — always candidates
+      exact      Host("x.com") rules — O(1) dict lookup by hostname
+      globs      HostGlob("m.*.com") rules — single compiled re2 alternation
+
+    candidate_indices(host) returns a frozenset[int] of rule positions that
+    *could* match this host. Rules outside the set are skipped without calling
+    rule.match.matches(). The set is recomputed only when the host changes
+    mid-pipeline (e.g. RewriteHostPrefix rewrites m.youtube.com → www.youtube.com),
+    so subsequent Host("www.youtube.com") rules correctly become candidates.
+
+    See DESIGN.md § Rule Indexing.
+    """
+
+    def __init__(self, rules: list[Rule]) -> None:
+        self._universal: set[int] = set()
+        self._exact: dict[str, set[int]] = {}
+        self._globs: list[tuple[int, str]] = []  # (rule_idx, glob_pattern)
+        self._glob_re: re.Pattern[str] | None = None  # re2.Pattern if google-re2 installed
+
+        for i, rule in enumerate(rules):
+            m = rule.match
+            if isinstance(m, AnyHost):
+                self._universal.add(i)
+            elif isinstance(m, HostGlob):
+                self._globs.append((i, m.pattern))
+            else:
+                hosts = _hosts_from_matcher(m)
+                if "*" in hosts:
+                    self._universal.add(i)  # conservative: unknown matcher type
+                else:
+                    for h in hosts:
+                        self._exact.setdefault(h, set()).add(i)
+
+        if self._globs:
+            self._glob_re = _glob_re_module.compile(
+                "(?i)" + "|".join(
+                    f"(?P<g{j}>{_glob_to_inner_regex(pat)})"
+                    for j, (_, pat) in enumerate(self._globs)
+                ),
+            )
+
+    def candidate_indices(self, host: str) -> frozenset[int]:
+        """Rule indices that could match this host, used as a pre-filter."""
+        indices = set(self._universal)
+        indices.update(self._exact.get(host, set()))
+        if self._glob_re is not None:
+            m = self._glob_re.fullmatch(host)
+            if m:
+                indices.update(
+                    self._globs[int(k[1:])][0]
+                    for k, v in m.groupdict().items()
+                    if v is not None
+                )
+        return frozenset(indices)
+
+
+# ---------------------------------------------------------------------------
 # HTTP helpers
 # ---------------------------------------------------------------------------
 
@@ -299,21 +381,39 @@ def _same_content(a: dict, b: dict) -> bool:
 # Pipeline
 # ---------------------------------------------------------------------------
 
-def canonicalize(url: str, rules: list[Rule], online: bool = False, _depth: int = 0) -> str:
+def canonicalize(
+    url: str,
+    rules: list[Rule],
+    online: bool = False,
+    _depth: int = 0,
+    _index: _RuleIndex | None = None,
+) -> str:
     """Apply all matching rules to url. Returns canonical URL."""
     if _depth > 10:
         logger.debug("canonicalize: max redirect depth reached for %s", url)
         return url
 
-    for rule in rules:
+    if _index is None:
+        _index = _RuleIndex(rules)
+
+    prev_host: str | None = None
+    candidates: frozenset[int] = frozenset()
+
+    for i, rule in enumerate(rules):
         f = Furl(url)
+        if f.host != prev_host:
+            candidates = _index.candidate_indices(f.host)
+            prev_host = f.host
+        if i not in candidates:
+            continue
         if not rule.match.matches(f):
             continue
         for action in rule.actions:
             if isinstance(action, FollowRedirect):
                 if online:
                     return canonicalize(
-                        _http_resolve(url), rules=rules, online=online, _depth=_depth + 1
+                        _http_resolve(url), rules=rules, online=online,
+                        _depth=_depth + 1, _index=_index,
                     )
                 break  # skip if offline
             new_url = action.apply(f)

@@ -210,6 +210,63 @@ flagged. This is intentional — the path-level overlap analysis would be
 complex and error-prone, and having two `KeepParams` for the same host almost
 always indicates a design mistake anyway.
 
+## Rule Indexing
+
+`canonicalize()` builds a `_RuleIndex` on the first call and passes it through
+recursive `FollowRedirect` calls to avoid rebuilding.
+
+### Buckets
+
+| Bucket | Matcher type | Per-URL lookup |
+|--------|-------------|----------------|
+| `universal` | `AnyHost()` | Always included — O(1) |
+| `exact` | `Host("x.com")` | Dict lookup by hostname — O(1) |
+| `globs` | `HostGlob("m.*.com")` | Single compiled re2 alternation — O(L) |
+
+Unknown matcher types (e.g. `_And(HostGlob, Path)`) fall into `universal`
+conservatively — they are always checked, and `rule.match.matches(f)` does
+the full filtering.
+
+### Per-rule fast path
+
+At each rule position `i` in the loop, `i not in candidates` short-circuits
+before calling `rule.match.matches(f)`. `candidates` is a `frozenset[int]`
+recomputed only when `f.host` changes — this is rare but necessary because
+`RewriteHostPrefix` can change the host mid-pipeline (e.g. `m.youtube.com` →
+`www.youtube.com`), after which `Host("www.youtube.com")` rules must fire.
+
+### HostGlob alternation
+
+All `HostGlob` patterns are merged into one compiled regex at index
+construction time using `fnmatch.translate()` + named capture groups:
+
+```python
+# fnmatch.translate("m.*.com") → '(?s:m\\..*\\.com)\\Z'
+# Strip \\Z (re2 lacks it; fullmatch anchors both ends)
+_glob_re = re2.compile("(?i)(?P<g0>(?s:m\\..*\\.com))|...")
+```
+
+`google-re2` (if installed) provides a true DFA with O(L) matching in hostname
+length L — no backtracking, no worst-case blowup. Falls back to stdlib `re`
+(NFA) transparently.
+
+Install the optional DFA backend:
+```bash
+uv sync --group perf   # or: pip install google-re2
+```
+
+### Complexity
+
+| Phase | Before | After |
+|-------|--------|-------|
+| Index build | — | O(R) once per top-level call |
+| Per-rule match check | O(M) × R | O(1) set lookup; O(M) only for candidates |
+| HostGlob batch check | O(G × L) | O(L) via DFA |
+
+R = total rules, M = match cost, G = glob rules, L = hostname length.
+
+---
+
 ## Adding a New Rule
 
 1. `uv run scripts/canonicalize.py --probe <url>` — review output

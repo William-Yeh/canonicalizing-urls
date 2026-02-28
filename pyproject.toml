@@ -4,3 +4,6 @@ pythonpath = ["scripts"]
 
 [dependency-groups]
 dev = ["pytest", "httpx", "beautifulsoup4", "furl", "click"]
+perf = [
+    "google-re2",
+]
