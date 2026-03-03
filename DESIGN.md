@@ -81,6 +81,7 @@ Rule(
 | `RewriteHostPrefix("m.", "www.")` | no | Replace host prefix (e.g. mobile → desktop) |
 | `TrimPathSuffix(n=N)` | no | Remove N trailing path segments |
 | `ExtractPath(pattern=r"…")` | no | Regex-extract path sub-segment |
+| `RewritePath(pattern=r"…", replacement=r"…")` | no | Regex substitution on path (supports capture groups); clears query+fragment if path changed |
 | `StripFragment()` | no | Remove `#fragment` |
 | `FollowRedirect()` | **yes** | HTTP GET → restart pipeline with final URL |
 
@@ -134,6 +135,15 @@ unwrapped URL. This is intentional: a rule like LinkedIn's has
 **`FollowRedirect` restarts the whole pipeline.** It calls `canonicalize()`
 recursively with the resolved URL, so all rules (including universal tracking
 strippers) apply to the final URL.
+
+**Host-rewriting rules must precede `HostGlob` rules.** After a `RewriteHost`
+action fires, `current_host` changes and `candidates` is recomputed for the
+next rule. This means a `Host("m.x.com") → RewriteHost("x.com")` rule
+placed before the generic `HostGlob("m.*.com")` rule correctly prevents the
+glob from also firing — `x.com` is no longer a candidate for `m.*.com`.
+`validate_rules()` enforces this automatically: if a specific `Host("x")`
+rule with a host-rewriting action appears *after* a `HostGlob` rule that also
+rewrites the host and matches `"x"`, a `ValueError` is raised at import time.
 
 ---
 
@@ -201,10 +211,12 @@ prevents this.
 ## Bootstrap Lint Check
 
 `validate_rules(rules)` is called automatically at the bottom of `rules.py`
-on import. It raises `ValueError` if two `KeepParams` rules can match the
-same URL.
+on import. It raises `ValueError` on two classes of mistakes:
 
-**Algorithm:** For each pair of rules that both contain a `KeepParams` action,
+**1. Conflicting `KeepParams` rules** — two rules that can match the same URL
+both contain `KeepParams`. Each strips what the other kept, leaving no params.
+
+*Algorithm:* For each pair of rules that both contain a `KeepParams` action,
 extract the host constraint from each matcher (`_hosts_from_matcher`), then
 check if those host sets can overlap:
 
@@ -218,6 +230,16 @@ the same host but non-overlapping paths (e.g. `/a/*` vs `/b/*`) are still
 flagged. This is intentional — the path-level overlap analysis would be
 complex and error-prone, and having two `KeepParams` for the same host almost
 always indicates a design mistake anyway.
+
+**2. Eclipsed host-rewriting rules** — a `Host("x")` rule with a
+`RewriteHost`/`RewriteHostPrefix` action appears *after* a `HostGlob` rule
+that also rewrites the host and whose pattern matches `"x"`. The glob fires
+first, changes `current_host`, and the specific rule is silently skipped.
+
+*Algorithm:* For each rule with a specific host (`Host(...)` or `_And(Host(...), ...)`)
+that rewrites the host, scan all earlier rules for a `HostGlob` that also
+rewrites the host and whose `fnmatch` pattern matches the specific host. If
+found, raise `ValueError` naming both rule indices and suggesting the fix.
 
 ## Rule Indexing
 
@@ -284,8 +306,10 @@ R = total rules, M = match cost, G = glob rules, L = hostname length.
 2. Open `scripts/rules.py` — add the suggested `Rule(...)` after similar-domain rules
 3. `uv run scripts/canonicalize.py <url>` — verify output
 4. `uv run --group dev pytest tests/ -v` — confirm no regressions
-5. Optionally add a test to `tests/test_canonicalize.py`
+5. Add a UAT row to `tests/test_uat.py` (BEFORE→AFTER)
 6. Commit: `feat: add <domain> canonicalization rule`
+
+**Choosing a path action:** `ExtractPath` is a regex *search* (keeps only the matched substring). `RewritePath` is a regex *substitution* (use capture groups `\1`, `\2`, … to reconstruct the path). Use `RewritePath` when the canonical path is a transformed version of the original (e.g. strip a slug but keep the parent segment and an embedded ID).
 
 ---
 

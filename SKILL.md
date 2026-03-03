@@ -34,7 +34,11 @@ When the user asks to canonicalize a URL:
 When the script returns unchanged output but the URL is clearly non-canonical:
 1. `uv run scripts/canonicalize.py --probe <url>` — review suggested actions
 2. Ask user: generalize to a pattern, or keep domain-specific?
-3. Add the confirmed `Rule(...)` to `RULES` in `scripts/rules.py`
-   (insert after similar-domain rules, before the closing bracket)
-4. `uv run scripts/canonicalize.py <original_url>` — verify output
-5. Commit: `feat: add <domain> canonicalization rule`
+3. Add a failing UAT row to `tests/test_uat.py` (BEFORE→AFTER)
+4. Add the confirmed `Rule(...)` to `RULES` in `scripts/rules.py`
+   - Insert **before** `HostGlob` rules if the rule rewrites the host for a specific domain
+     (the specific `Host(...)` rule must fire first to prevent the generic glob from also running)
+   - Otherwise insert after similar-domain rules, before the closing bracket
+5. `uv run scripts/canonicalize.py <original_url>` — verify output
+6. `uv run --group dev pytest tests/ -v` — confirm all tests pass
+7. Commit: `feat: add <domain> canonicalization rule`

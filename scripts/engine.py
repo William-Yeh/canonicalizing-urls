@@ -177,6 +177,20 @@ class ExtractPath:
             f.remove(fragment=True)
 
 
+@dataclass
+class RewritePath:
+    """Regex substitution on the path; clears query+fragment if path changed."""
+    pattern: str
+    replacement: str
+
+    def apply(self, f: Furl) -> None:
+        new_path, n = re.subn(self.pattern, self.replacement, str(f.path))
+        if n:
+            f.path = new_path
+            f.args.clear()
+            f.remove(fragment=True)
+
+
 class StripFragment:
     """Remove URL fragment (#...)."""
 
@@ -226,13 +240,23 @@ def _rules_can_overlap(a: Rule, b: Rule) -> bool:
     return bool(ha & hb)
 
 
-def validate_rules(rules: list) -> None:
-    """Bootstrap lint: raise ValueError if two KeepParams rules can overlap.
+def _is_host_rewriting(rule: Rule) -> bool:
+    return any(isinstance(a, (RewriteHost, RewriteHostPrefix)) for a in rule.actions)
 
-    Two overlapping KeepParams rules are destructive — each strips what the
-    other kept, leaving no params. Called automatically at the bottom of
-    rules.py on import.
+
+def validate_rules(rules: list) -> None:
+    """Bootstrap lint: raise ValueError on rule ordering/conflict problems.
+
+    Checks:
+    1. Two KeepParams rules that can match the same URL — each strips what the
+       other kept, leaving no params.
+    2. A specific Host("x") host-rewriting rule that appears after a HostGlob
+       rule that also rewrites the host and matches "x" — the glob fires first,
+       changes current_host, and the specific rule is silently skipped (eclipsed).
+
+    Called automatically at the bottom of rules.py on import.
     """
+    # --- Check 1: conflicting KeepParams ---
     keep_rules = [(i, r) for i, r in enumerate(rules)
                   if any(isinstance(a, KeepParams) for a in r.actions)]
     for (i, ri), (j, rj) in itertools.combinations(keep_rules, 2):
@@ -242,6 +266,28 @@ def validate_rules(rules: list) -> None:
                 f"the same URL. Use KeepParams only in domain-specific rules "
                 f"(Host(...)), never in AnyHost() or overlapping rules."
             )
+
+    # --- Check 2: eclipsed host-rewriting rules ---
+    for i, rule in enumerate(rules):
+        if not _is_host_rewriting(rule):
+            continue
+        hosts = _hosts_from_matcher(rule.match)
+        if "*" in hosts:
+            continue  # unconstrained rule — ordering not analysable
+        for j in range(i):
+            earlier = rules[j]
+            if not isinstance(earlier.match, HostGlob):
+                continue
+            if not _is_host_rewriting(earlier):
+                continue
+            for host in hosts:
+                if fnmatch.fnmatch(host, earlier.match.pattern):
+                    raise ValueError(
+                        f"rules[{i}] (Host-specific, rewrites host for {host!r}) is eclipsed "
+                        f"by rules[{j}] HostGlob({earlier.match.pattern!r}) — the glob fires "
+                        f"first and changes the host, so the specific rule is never reached. "
+                        f"Move rules[{i}] before rules[{j}]."
+                    )
 
 
 # ---------------------------------------------------------------------------

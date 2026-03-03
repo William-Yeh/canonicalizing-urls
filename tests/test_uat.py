@@ -117,6 +117,43 @@ OFFLINE = [
     ("Mailchimp: strip per-subscriber e= ID",
      "https://mailchi.mp/manny-li/063-17460036?e=143e81f948",
      "https://mailchi.mp/manny-li/063-17460036"),
+
+    # ── X (Twitter) ────────────────────────────────────────────────────────
+
+    ("X mobile: m.x.com → x.com (one step), strip launch_app_store",
+     "https://m.x.com/mntruell/status/2026736314272591924?launch_app_store=true",
+     "https://x.com/mntruell/status/2026736314272591924"),
+
+    ("X: launch_app_store stripped on desktop domain too",
+     "https://x.com/mntruell/status/2026736314272591924?launch_app_store=true&keep=1",
+     "https://x.com/mntruell/status/2026736314272591924?keep=1"),
+
+    # ── Medium ─────────────────────────────────────────────────────────────
+
+    ("Medium publication article: strip slug, keep 12-char hex ID",
+     ("https://medium.com/data-science-collective/"
+      "the-complete-guide-to-ai-agent-memory-files-claude-md-agents-md-and-beyond-49ea0df5c5a9"),
+     "https://medium.com/data-science-collective/49ea0df5c5a9"),
+
+    ("Medium @user article: strip slug, keep 12-char hex ID",
+     "https://medium.com/@john/my-article-title-49ea0df5c5a9",
+     "https://medium.com/@john/49ea0df5c5a9"),
+
+    ("Medium article + tracking params: slug stripped, params cleared",
+     "https://medium.com/pub/slug-title-49ea0df5c5a9?source=newsletter&utm_source=twitter",
+     "https://medium.com/pub/49ea0df5c5a9"),
+
+    # ── DEV.to ─────────────────────────────────────────────────────────────
+
+    ("DEV.to: strip slug, keep short hex ID",
+     "https://dev.to/paulasantamaria/introduction-to-yaml-125f",
+     "https://dev.to/paulasantamaria/125f"),
+
+    # ── Hashnode ───────────────────────────────────────────────────────────
+
+    ("Hashnode: strip slug, keep CUID",
+     "https://johndoe.hashnode.dev/creating-your-first-react-app-ck5h4w9i50021c5s15ks21h2k",
+     "https://johndoe.hashnode.dev/ck5h4w9i50021c5s15ks21h2k"),
 ]
 
 

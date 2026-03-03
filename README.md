@@ -49,9 +49,11 @@ Copy the skill directory to your agent's skill folder:
 | Any | `utm_*`, `wts*`, `aem_*`, `rdid` |
 | Any | `_hsenc`, `_hsmi`, `mc_cid`, `mc_eid` (HubSpot/Mailchimp) |
 | Any | `mkt_tok` (Marketo), `_ke` (Klaviyo), `vgo_ee` (ActiveCampaign) |
+| Any | `launch_app_store` (X mobile app-store redirect hint) |
+| `m.x.com` | Rewrite directly to `x.com` (X has no `www.` subdomain) |
 | `www.linkedin.com/learning-login/share` | Unwrap redirect, strip `account`/`trk`/`shareId` |
 | `www.linkedin.com` | Strip `u` param |
-| `m.*.com` | Rewrite mobile subdomain to `www.` (e.g. `m.youtube.com` → `www.youtube.com`, `m.facebook.com` → `www.facebook.com`) |
+| `m.*.com` | Rewrite mobile subdomain to `www.` (e.g. `m.youtube.com` → `www.youtube.com`) |
 | `www.facebook.com` | Keep only `v`, `story_fbid`, `id`, `set` params |
 | `www.facebook.com/share/*` | Follow redirect to real URL |
 | `share.google` | Follow redirect to real URL (then YouTube rules apply) |
@@ -59,6 +61,9 @@ Copy the skill directory to your agent's skill folder:
 | `www.amazon.com` | Extract `/dp/<ASIN>` path |
 | `www.infoq.cn` | Strip all params |
 | `mailchi.mp` | Strip all params (removes per-subscriber `e=` ID) |
+| `medium.com` | Strip verbose slug, keep 12-char hex article ID (e.g. `/pub/long-title-49ea0df5c5a9` → `/pub/49ea0df5c5a9`) |
+| `dev.to` | Strip verbose slug, keep short hex article ID |
+| `*.hashnode.dev` | Strip verbose slug, keep CUID |
 
 ## Testing
 

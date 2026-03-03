@@ -6,9 +6,9 @@ from unittest.mock import patch
 from furl import furl as Furl
 import pytest
 from engine import (
-    canonicalize, AnyHost, Host, Path, Rule, StripParams, KeepParams,
-    UnwrapRedirectParam, RewriteHost, TrimPathSuffix, ExtractPath, StripFragment,
-    FollowRedirect, validate_rules,
+    canonicalize, AnyHost, Host, HostGlob, Path, Rule, StripParams, KeepParams,
+    UnwrapRedirectParam, RewriteHost, RewriteHostPrefix, TrimPathSuffix, ExtractPath,
+    StripFragment, FollowRedirect, RewritePath, validate_rules,
 )
 from rules import RULES
 
@@ -266,6 +266,70 @@ def test_keep_params_pipeline():
 # validate_rules lint check
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# RewritePath
+# ---------------------------------------------------------------------------
+
+def test_rewrite_path_strips_slug_keeps_id():
+    f = Furl("https://medium.com/pub/the-full-title-49ea0df5c5a9")
+    RewritePath(
+        pattern=r"^(/[^/]+/).*-([0-9a-f]{12})$",
+        replacement=r"\1\2",
+    ).apply(f)
+    assert f.url == "https://medium.com/pub/49ea0df5c5a9"
+
+
+def test_rewrite_path_clears_query_and_fragment():
+    f = Furl("https://medium.com/pub/title-49ea0df5c5a9?source=newsletter#section")
+    RewritePath(
+        pattern=r"^(/[^/]+/).*-([0-9a-f]{12})$",
+        replacement=r"\1\2",
+    ).apply(f)
+    assert f.url == "https://medium.com/pub/49ea0df5c5a9"
+
+
+def test_rewrite_path_noop_when_no_match():
+    f = Furl("https://example.com/regular-path?keep=1")
+    RewritePath(
+        pattern=r"^(/[^/]+/).*-([0-9a-f]{12})$",
+        replacement=r"\1\2",
+    ).apply(f)
+    assert f.url == "https://example.com/regular-path?keep=1"
+
+
+def test_rewrite_path_noop_when_already_id_only():
+    # No slug to strip — path already contains only the hex ID (no hyphen before it)
+    f = Furl("https://medium.com/pub/49ea0df5c5a9")
+    RewritePath(
+        pattern=r"^(/[^/]+/).*-([0-9a-f]{12})$",
+        replacement=r"\1\2",
+    ).apply(f)
+    assert f.url == "https://medium.com/pub/49ea0df5c5a9"
+
+
+def test_builtin_rules_medium_publication():
+    url = ("https://medium.com/data-science-collective/"
+           "the-complete-guide-to-ai-agent-memory-files-claude-md-agents-md-and-beyond-49ea0df5c5a9")
+    assert canonicalize(url, rules=RULES) == \
+        "https://medium.com/data-science-collective/49ea0df5c5a9"
+
+
+def test_builtin_rules_medium_user():
+    url = "https://medium.com/@john/my-article-title-49ea0df5c5a9"
+    assert canonicalize(url, rules=RULES) == "https://medium.com/@john/49ea0df5c5a9"
+
+
+def test_builtin_rules_devto():
+    url = "https://dev.to/paulasantamaria/introduction-to-yaml-125f"
+    assert canonicalize(url, rules=RULES) == "https://dev.to/paulasantamaria/125f"
+
+
+def test_builtin_rules_hashnode():
+    url = "https://johndoe.hashnode.dev/creating-your-first-react-app-ck5h4w9i50021c5s15ks21h2k"
+    assert canonicalize(url, rules=RULES) == \
+        "https://johndoe.hashnode.dev/ck5h4w9i50021c5s15ks21h2k"
+
+
 def test_validate_rules_passes_strip_and_keep_same_host():
     # StripParams + KeepParams on same host: no conflict
     rules = [
@@ -310,3 +374,49 @@ def test_validate_rules_conflict_host_and_host_with_path():
     ]
     with pytest.raises(ValueError, match="Conflicting KeepParams"):
         validate_rules(rules)
+
+
+# ---------------------------------------------------------------------------
+# validate_rules: host-rewrite ordering
+# ---------------------------------------------------------------------------
+
+def test_validate_rules_passes_specific_host_rewrite_before_glob():
+    # Correct order: specific Host rule before HostGlob — no error
+    rules = [
+        Rule(match=Host("m.x.com"), actions=[RewriteHost("x.com")]),
+        Rule(match=HostGlob("m.*.com"), actions=[RewriteHostPrefix("m.", "www.")]),
+    ]
+    validate_rules(rules)  # must not raise
+
+
+def test_validate_rules_eclipsed_host_rewrite_after_glob():
+    # Wrong order: HostGlob fires first and rewrites host, specific rule is never reached
+    rules = [
+        Rule(match=HostGlob("m.*.com"), actions=[RewriteHostPrefix("m.", "www.")]),
+        Rule(match=Host("m.x.com"), actions=[RewriteHost("x.com")]),
+    ]
+    with pytest.raises(ValueError, match="eclipsed"):
+        validate_rules(rules)
+
+
+def test_validate_rules_passes_glob_no_host_rewrite():
+    # HostGlob rule doesn't rewrite the host — no ordering constraint
+    rules = [
+        Rule(match=HostGlob("m.*.com"), actions=[StripParams(params=["utm_*"])]),
+        Rule(match=Host("m.x.com"), actions=[RewriteHost("x.com")]),
+    ]
+    validate_rules(rules)  # must not raise
+
+
+def test_validate_rules_passes_specific_glob_no_overlap():
+    # HostGlob pattern doesn't match the specific host — no conflict
+    rules = [
+        Rule(match=HostGlob("m.*.org"), actions=[RewriteHostPrefix("m.", "www.")]),
+        Rule(match=Host("m.x.com"), actions=[RewriteHost("x.com")]),
+    ]
+    validate_rules(rules)  # must not raise
+
+
+def test_validate_rules_passes_builtin_rules():
+    # The actual RULES list must pass all validation checks
+    validate_rules(RULES)  # must not raise

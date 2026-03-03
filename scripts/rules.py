@@ -6,8 +6,8 @@ For rule syntax, see engine.py and DESIGN.md.
 
 from engine import (
     AnyHost, ExtractPath, FollowRedirect, Host, HostGlob, KeepParams, Path,
-    RewriteHost, RewriteHostPrefix, Rule, StripParams, UnwrapRedirectParam,
-    validate_rules,
+    RewriteHost, RewriteHostPrefix, RewritePath, Rule, StripParams,
+    UnwrapRedirectParam, validate_rules,
 )
 
 RULES: list = [
@@ -21,7 +21,14 @@ RULES: list = [
             "mkt_tok",                               # Marketo
             "_ke",                                   # Klaviyo
             "vgo_ee",                                # ActiveCampaign
+            "launch_app_store",                      # X (mobile app-store redirect hint)
         ])],
+    ),
+
+    # --- X (Twitter) — m.x.com → x.com directly (x.com has no www subdomain) ---
+    Rule(
+        match=Host("m.x.com"),
+        actions=[RewriteHost("x.com")],
     ),
 
     # --- Mobile subdomain normalization (m.*.com → www.*.com) ---
@@ -81,6 +88,36 @@ RULES: list = [
     Rule(
         match=Host("mailchi.mp"),
         actions=[StripParams(params=["*"])],
+    ),
+
+    # --- Medium (medium.com) ---
+    # Articles: /pub-or-@user/verbose-slug-{12hexid} → /pub-or-@user/{12hexid}
+    Rule(
+        match=Host("medium.com"),
+        actions=[RewritePath(
+            pattern=r"^(/[^/]+/).*-([0-9a-f]{12})$",
+            replacement=r"\1\2",
+        )],
+    ),
+
+    # --- DEV.to (dev.to) ---
+    # Articles: /user/verbose-slug-{4-8hexid} → /user/{4-8hexid}
+    Rule(
+        match=Host("dev.to"),
+        actions=[RewritePath(
+            pattern=r"^(/[^/]+/).*-([0-9a-f]{4,8})$",
+            replacement=r"\1\2",
+        )],
+    ),
+
+    # --- Hashnode (*.hashnode.dev) ---
+    # Articles: /verbose-slug-{cuid} → /{cuid}  (CUIDs: ck + 22-24 lowercase alphanumeric)
+    Rule(
+        match=HostGlob("*.hashnode.dev"),
+        actions=[RewritePath(
+            pattern=r"^/.*-(ck[a-z0-9]{22,24})$",
+            replacement=r"/\1",
+        )],
     ),
 ]
 
