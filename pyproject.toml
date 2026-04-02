@@ -1,6 +1,6 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["scripts"]
+pythonpath = ["skill/scripts"]
 
 [dependency-groups]
 dev = ["pytest", "httpx", "beautifulsoup4", "furl", "click"]
