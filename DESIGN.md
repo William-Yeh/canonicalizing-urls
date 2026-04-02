@@ -11,11 +11,13 @@ resolving opaque short-links via HTTP.
 ## File Structure
 
 ```
-scripts/
-  engine.py        ← primitives, pipeline, probe algorithm
-  rules.py         ← RULES list (the one file that grows)
-  canonicalize.py  ← PEP 723 entry point + thin click CLI
-  gen_figures.py   ← PEP 723 script; regenerates figures/ from benchmark data
+skill/
+  SKILL.md           ← triggering conditions + Claude workflows
+  scripts/
+    engine.py        ← primitives, pipeline, probe algorithm
+    rules.py         ← RULES list (the one file that grows)
+    canonicalize.py  ← PEP 723 entry point + thin click CLI
+    gen_figures.py   ← PEP 723 script; regenerates figures/ from benchmark data
 tests/
   test_canonicalize.py  ← unit tests for engine primitives and pipeline
   test_uat.py           ← end-to-end BEFORE→AFTER acceptance table
@@ -24,7 +26,6 @@ figures/
   bench1.png … bench4.png   ← individual benchmark charts
   bench_overview.png         ← 2×2 overview of all four benchmarks
 BENCHMARK.md       ← benchmark goals, design, results, and insights
-SKILL.md           ← triggering conditions + Claude workflows
 ```
 
 **Separation of concerns:**
@@ -302,9 +303,9 @@ R = total rules, M = match cost, G = glob rules, L = hostname length.
 
 ## Adding a New Rule
 
-1. `uv run scripts/canonicalize.py --probe <url>` — review output
-2. Open `scripts/rules.py` — add the suggested `Rule(...)` after similar-domain rules
-3. `uv run scripts/canonicalize.py <url>` — verify output
+1. `uv run skill/scripts/canonicalize.py --probe <url>` — review output
+2. Open `skill/scripts/rules.py` — add the suggested `Rule(...)` after similar-domain rules
+3. `uv run skill/scripts/canonicalize.py <url>` — verify output
 4. `uv run --group dev pytest tests/ -v` — confirm no regressions
 5. Add a UAT row to `tests/test_uat.py` (BEFORE→AFTER)
 6. Commit: `feat: add <domain> canonicalization rule`

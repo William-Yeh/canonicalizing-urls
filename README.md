@@ -41,6 +41,14 @@ Copy the skill directory to your agent's skill folder:
 
 - `"Add a canonicalization rule for this URL: <url>"`
 
+### CLI
+
+```bash
+uv run skill/scripts/canonicalize.py <url>
+uv run skill/scripts/canonicalize.py --online <url>   # follow opaque short-links
+uv run skill/scripts/canonicalize.py --probe <url>    # discover rules for non-canonical URLs
+```
+
 ## Built-in rules
 
 | Domain | What it cleans |
