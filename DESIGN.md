@@ -6,57 +6,104 @@ An agent skill that canonicalizes URLs — stripping tracking params,
 unwrapping redirects, normalizing hosts, extracting canonical paths, and
 resolving opaque short-links via HTTP.
 
+Originally written in Python, now implemented in **Rust** (see migration below).
+
+---
+
+## Migration: Python → Rust
+
+The Rust port preserves the algorithm, rule DSL, and complexity design; it
+changes only the implementation substrate. Each Python construct maps as:
+
+| Concern | Python (original) | Rust (current) | Why |
+|---------|-------------------|----------------|-----|
+| URL model | `furl` (mutable, order-preserving) | `url` crate + ordered-query wrapper (`url_model`) | `url::Url` doesn't preserve query order on mutation; the wrapper restores furl's behavior |
+| Match/action types | `@dataclass` + duck typing | `enum` ADTs + `match` | compiler-checked exhaustiveness |
+| Rule DSL | `Rule(match=Host("x") & Path("/y"), actions=[…])` | `rule(Host("x") & Path("/y"), vec![…])` | constructor fns + `impl BitAnd` keep the look |
+| HostGlob merge | `fnmatch.translate` → alternation + named groups; optional `google-re2` | one `regex::RegexSet` (native multi-pattern DFA) | linear-time, no optional backend, drops the group→rule map |
+| Path regex syntax | `\1`, `\2` (Python `re.sub`) | `$1`, `$2` (Rust `regex`) | the one unavoidable DSL difference |
+| HTTP | `httpx` | `reqwest` (blocking) | — |
+| HTML (probe) | `beautifulsoup4` | `tl` | lighter; probe only reads 3 meta tags |
+| CLI | `click` + PEP 723 / `uv run` | `clap` + prebuilt binary | no runtime toolchain for users |
+| Network test seam | `unittest.mock.patch("engine._http_resolve")` | resolver injected as a parameter (DI) | explicit seam; offline tests panic if the net is touched |
+
+**Performance:** same O(1)-lookup / O(R)-build complexity; ~28× faster on the
+real rule list in absolute terms. See [BENCHMARK.md](BENCHMARK.md) for the
+head-to-head, including the per-call-regex-compilation regression the port
+hit and fixed.
+
 ---
 
 ## File Structure
 
 ```
 skill/
-  SKILL.md           ← triggering conditions + Claude workflows
+  SKILL.md           ← triggering conditions + Claude workflows; step-0 install guard
   scripts/
-    engine.py        ← primitives, pipeline, probe algorithm
-    rules.py         ← RULES list (the one file that grows)
-    canonicalize.py  ← PEP 723 entry point + thin click CLI
-    gen_figures.py   ← PEP 723 script; regenerates figures/ from benchmark data
+    install.sh       ← download+verify per-platform release archive → bin/ (fallback: cargo build)
+  bin/               ← git-ignored; canonicalize binary fetched/built on first use
+src/
+  lib.rs             ← crate root (functional core)
+  url_model.rs       ← order-preserving URL wrapper (replaces furl)
+  engine.rs          ← primitives, pipeline, RuleIndex, validate_rules
+  rules.rs           ← rules() list (the one file that grows)
+  main.rs            ← clap CLI (imperative shell)
+  probe.rs           ← differential HTTP probe (reqwest + tl)
+examples/
+  gen_figures.rs     ← plotters; dev-only, regenerates figures/ (not a [[bin]], so dist skips it)
 tests/
-  test_canonicalize.py  ← unit tests for engine primitives and pipeline
-  test_uat.py           ← end-to-end BEFORE→AFTER acceptance table
-  perf_bench.py         ← complexity benchmarks with ratio-based assertions
+  uat.rs             ← pipeline e2e: BEFORE→AFTER acceptance table
+  builtin_rules.rs   ← built-in RULES integration tests
+  cli.rs             ← process e2e: spawns the binary, asserts stdout/exit contract
+  perf_ratios.rs     ← complexity ratio assertions (CI regression gate)
+benches/
+  rule_index.rs      ← criterion statistical benchmarks
+dist-workspace.toml  ← `dist` release config (4 targets, archives + checksums)
 figures/
   bench1.png … bench4.png   ← individual benchmark charts
   bench_overview.png         ← 2×2 overview of all four benchmarks
 BENCHMARK.md       ← benchmark goals, design, results, and insights
 ```
 
-**Separation of concerns:**
+**Separation of concerns (Functional Core / Imperative Shell):**
 
 | File | Role | Changes when |
 |------|------|-------------|
-| `engine.py` | Rule language + execution | Adding new primitive types |
-| `rules.py` | Domain-specific rules | Adding support for a new site |
-| `canonicalize.py` | CLI glue | Changing CLI flags |
-| `perf_bench.py` | Complexity verification | Benchmarking methodology changes |
-| `gen_figures.py` | Figure generation | Measurements updated or new charts needed |
+| `engine.rs` | Rule language + execution (pure) | Adding new primitive types |
+| `url_model.rs` | URL parsing/mutation (pure) | URL representation changes |
+| `rules.rs` | Domain-specific rules | Adding support for a new site |
+| `main.rs` | CLI + network shell | Changing CLI flags |
+| `probe.rs` | Rule-discovery shell | Probe heuristics change |
+| `benches/`, `examples/gen_figures.rs` | Complexity verification & charts | Benchmarking changes |
 
-`canonicalize.py` and `gen_figures.py` hold the PEP 723 `# /// script`
-inline-deps header so they can be executed directly via `uv run` with zero
-setup. `engine.py` and `rules.py` are plain Python modules loaded via
-`sys.path.insert`.
+The engine and URL model are a **pure functional core** (no I/O); `main.rs` and
+`probe.rs` are the **imperative shell** (network). The pipeline takes the HTTP
+resolver as a parameter (dependency injection), so the core is testable without
+mocks and the network seam is explicit.
+
+### Action ADTs (type-safe control flow)
+
+Match conditions and actions are Rust `enum`s (`Matcher`, `Action`). The
+`apply()` function `match`es over `Action`, so the compiler enforces
+exhaustiveness — adding a variant without handling it fails to build. The DSL is
+preserved via constructor functions (`Host("x")`, `strip_params(&[…])`) plus an
+`impl BitAnd for Matcher`, so `Host("x") & Path("/y")` reads like the original
+Python. `RewritePath` replacements use Rust regex syntax (`$1`, `$2`).
 
 ---
 
 ## Rule Language
 
-Rules are declarative Python objects. Each `Rule` has a `match` condition and
-an `actions` list. Rules run top-to-bottom; **all matching rules apply** (not
-first-match-only).
+Rules are declarative Rust values built via constructor functions. Each `Rule`
+has a `matcher` condition and an `actions` list. Rules run top-to-bottom;
+**all matching rules apply** (not first-match-only).
 
-```python
-Rule(
-    match=Host("www.linkedin.com") & Path("/learning-login/share"),
-    actions=[
-        UnwrapRedirectParam("redirect"),
-        StripParams(params=["account", "forceAccount", "trk", "shareId"]),
+```rust
+rule(
+    Host("www.linkedin.com") & Path("/learning-login/share"),
+    vec![
+        unwrap_redirect_param("redirect"),
+        strip_params(&["account", "forceAccount", "trk", "shareId"]),
     ],
 )
 ```
@@ -97,26 +144,31 @@ Rule(
 ## Pipeline Algorithm
 
 ```
-canonicalize(url, rules, online) → str
+canonicalize(url, rules, online, resolve) → String
+    index = RuleIndex::new(rules)          # built once; reused across recursion
 
-for each rule in rules:
-    f = Furl(url)
-    if not rule.match.matches(f): continue
+for each rule i in rules:
+    if host changed since last rule:
+        candidates = index.candidate_indices(host)   # O(1) pre-filter
+    if i not in candidates: continue       # skip without parsing the URL
+
+    f = Url::parse(url)                     # parse only for candidate rules
+    if not rule.matcher.matches(f): continue
 
     for each action in rule.actions:
         if action is FollowRedirect:
             if online:
-                resolved = _http_resolve(url)
-                return canonicalize(resolved, rules, online)  # recursive restart
+                resolved = resolve(url)     # injected resolver (DI, not a global)
+                return canonicalize(resolved, rules, online, resolve)  # recursive restart
             else:
-                break  # skip rule remainder when offline
+                break                       # skip rule remainder when offline
 
-        new_url = action.apply(f)
-        if new_url is not None:          # UnwrapRedirectParam returned a new URL
-            f = Furl(new_url)            # switch context to new URL
-            url = new_url               # don't break — remaining actions continue
+        new_url = apply(action, &mut f)
+        if new_url is Some:                 # UnwrapRedirectParam returned a new URL
+            f = Url::parse(new_url)         # switch context to new URL
+            url = new_url                   # don't break — remaining actions continue
         else:
-            url = f.url                 # action mutated f in place
+            url = f.to_string()             # action mutated f in place
 
 return url
 ```
@@ -151,8 +203,8 @@ rewrites the host and matches `"x"`, a `ValueError` is raised at import time.
 ## Probe Algorithm (`--probe`)
 
 Runs differential HTTP tests against a URL to discover which parts are safe
-to remove. Output is a suggested `Rule(...)` block ready to paste into
-`rules.py`.
+to remove. Output is a suggested `rule(...)` block ready to paste into
+`src/rules.rs`.
 
 ```
 probe(url):
@@ -179,7 +231,7 @@ probe(url):
 3. `<og:url>` meta tag — strong
 4. `<title>` tag — moderate
 
-Implemented in `_fetch_signals()` (httpx + BeautifulSoup) and `_same_content()`.
+Implemented in `fetch_signals()` (reqwest + tl) and `same_content()`.
 
 ---
 
@@ -211,8 +263,9 @@ prevents this.
 
 ## Bootstrap Lint Check
 
-`validate_rules(rules)` is called automatically at the bottom of `rules.py`
-on import. It raises `ValueError` on two classes of mistakes:
+`validate_rules(rules)` returns `Result<(), String>` and is exercised by the
+`validate_rules_passes_builtin_rules` test (so a bad rule list fails the build).
+It reports `Err` on two classes of mistakes:
 
 **1. Conflicting `KeepParams` rules** — two rules that can match the same URL
 both contain `KeepParams`. Each strips what the other kept, leaving no params.
@@ -269,25 +322,23 @@ recomputed only when `f.host` changes — this is rare but necessary because
 `RewriteHostPrefix` can change the host mid-pipeline (e.g. `m.youtube.com` →
 `www.youtube.com`), after which `Host("www.youtube.com")` rules must fire.
 
-### HostGlob alternation
+### HostGlob merge via `RegexSet`
 
-All `HostGlob` patterns are merged into one compiled regex at index
-construction time using `fnmatch.translate()` + named capture groups:
+All `HostGlob` patterns are merged into **one** `regex::RegexSet` at index
+construction time — the crate's native multi-pattern automaton:
 
-```python
-# fnmatch.translate("m.*.com") → '(?s:m\\..*\\.com)\\Z'  (\\z in Python ≥3.14)
-# Strip the trailing anchor (re2 supports neither; fullmatch anchors both ends)
-_glob_re = re2.compile("(?i)(?P<g0>(?s:m\\..*\\.com))|...")
+```rust
+// glob "m.*.com" → anchored regex "^m\\..*\\.com$", case-insensitive
+let glob_set = RegexSet::new(["(?i)^m\\..*\\.com$", "(?i)^.*\\.hashnode\\.dev$"]);
+// set.matches(host) runs ONE combined automaton; yields every matching pattern index
 ```
 
-`google-re2` (if installed) provides a true DFA with O(L) matching in hostname
-length L — no backtracking, no worst-case blowup. Falls back to stdlib `re`
-(NFA) transparently.
-
-Install the optional DFA backend:
-```bash
-uv sync --group perf   # or: pip install google-re2
-```
+`RegexSet` compiles all patterns into a single finite-automaton and matches a
+host in O(L) (hostname length), independent of the number of glob rules G — no
+backtracking, no catastrophic blowup, guaranteed by the engine. A parallel
+`glob_rule_ids: Vec<usize>` maps each set-match index back to its rule index
+(replacing Python's named-capture `group_to_rule` map). No optional backend to
+install — the standard `regex` crate already is a linear-time engine.
 
 ### Complexity
 
@@ -303,46 +354,95 @@ R = total rules, M = match cost, G = glob rules, L = hostname length.
 
 ## Adding a New Rule
 
-1. `uv run skill/scripts/canonicalize.py --probe <url>` — review output
-2. Open `skill/scripts/rules.py` — add the suggested `Rule(...)` after similar-domain rules
-3. `uv run skill/scripts/canonicalize.py <url>` — verify output
-4. `uv run --group dev pytest tests/ -v` — confirm no regressions
-5. Add a UAT row to `tests/test_uat.py` (BEFORE→AFTER)
+1. `canonicalize --probe <url>` — review the suggested `rule(...)`
+2. Open `src/rules.rs` — add the suggested `rule(...)` after similar-domain rules
+   (before any matching `HostGlob` rule if it rewrites the host — `validate_rules` enforces this)
+3. `cargo run -- <url>` — verify output
+4. `cargo test` — confirm no regressions
+5. Add a UAT row to `tests/uat.rs` (BEFORE→AFTER)
 6. Commit: `feat: add <domain> canonicalization rule`
 
-**Choosing a path action:** `ExtractPath` is a regex *search* (keeps only the matched substring). `RewritePath` is a regex *substitution* (use capture groups `\1`, `\2`, … to reconstruct the path). Use `RewritePath` when the canonical path is a transformed version of the original (e.g. strip a slug but keep the parent segment and an embedded ID).
+**Choosing a path action:** `ExtractPath` is a regex *search* (keeps only the matched substring). `RewritePath` is a regex *substitution* (use capture groups `$1`, `$2`, … to reconstruct the path). Use `RewritePath` when the canonical path is a transformed version of the original (e.g. strip a slug but keep the parent segment and an embedded ID).
 
 ---
 
 ## Dependencies
 
-| Package | Used for |
-|---------|----------|
-| `httpx` | HTTP GET with redirect following (`FollowRedirect`, probe) |
-| `beautifulsoup4` | Parse `<link rel="canonical">` and `<og:url>` in probe |
-| `furl` | Mutable URL objects; actions mutate `Furl` in place |
-| `click` | CLI in `canonicalize.py` |
-| `re`, `fnmatch` | Param matching and path extraction (stdlib) |
+| Crate | Used for |
+|-------|----------|
+| `url` | WHATWG URL parsing; wrapped by `url_model` for order-preserving query mutation |
+| `regex` | Param/path matching, glob translation, and the `RegexSet` HostGlob merge (linear-time DFA) |
+| `clap` | CLI in `main.rs` |
+| `reqwest` (blocking) | HTTP GET with redirect following (`FollowRedirect`, probe) |
+| `tl` | Lightweight HTML parsing — `<link rel=canonical>`, `og:url`, `<title>` in probe |
+| `criterion` (dev) | Statistical benchmarks |
+| `assert_cmd` / `predicates` (dev) | Process-level CLI e2e tests (`tests/cli.rs`) |
+| `plotters` (`figures` feature) | Render benchmark charts |
+
+---
+
+## Distribution & Release
+
+End users need **no Rust toolchain** — the skill fetches a prebuilt binary. The
+flow has three pieces:
+
+**1. Build & publish (maintainer) — [`dist`](https://opensource.axo.dev/cargo-dist/).**
+Release config lives in `dist-workspace.toml` (4 Unix targets, `installers = []`
+because the skill calls a fixed-path binary rather than a PATH installer). Pushing
+a version tag triggers `.github/workflows/release.yml` (generated by `dist`), which
+builds each target and uploads, per target, a `canonicalize-<triple>.tar.xz`
+archive plus a `.sha256` checksum to the GitHub Release.
+
+```bash
+# cut a release:
+git tag v0.1.0 && git push --tags     # → release.yml builds 4 targets, publishes archives + checksums
+# regenerate the workflow after editing dist-workspace.toml:
+dist generate
+```
+
+Only the `canonicalize` binary is shipped; `gen_figures` is an `examples/` target
+(not a `[[bin]]`), so `dist` does not package it.
+
+**2. Fetch & verify (first use) — `skill/scripts/install.sh`.**
+SKILL.md's step-0 guard runs `install.sh` if `bin/canonicalize` is absent. It maps
+`uname` → target triple, downloads the matching `.tar.xz` + `.sha256` over
+`--proto '=https' --tlsv1.2`, **verifies the checksum** before trusting the binary,
+then extracts it (from the archive's `canonicalize-<triple>/` subdir) into
+`skill/bin/`. On an unsupported platform or download failure it falls back to
+`cargo build --release` (requires a toolchain).
+
+**3. Invoke (every use).** The agent runs `"$SKILL_DIR/bin/canonicalize" <url>`
+per the stdout/exit contract in SKILL.md.
+
+> The `uname → triple` table in `install.sh` must stay in sync with `targets` in
+> `dist-workspace.toml`.
 
 ---
 
 ## Testing
 
 ```bash
-uv run --group dev pytest tests/ -v
+cargo test
 ```
 
-Two test files, distinct purposes:
+| Location | Purpose |
+|----------|---------|
+| `src/*.rs` `#[cfg(test)]` | Unit tests for engine primitives, URL model, pipeline, probe helpers |
+| `tests/uat.rs` | Pipeline e2e: BEFORE→AFTER tables driven through `canonicalize()` against the full `rules()` list |
+| `tests/builtin_rules.rs` | Built-in RULES integration tests (inputs distinct from the UAT) |
+| `tests/cli.rs` | Process-level e2e: spawns the compiled binary (`assert_cmd`) and asserts the stdout-only / exit-code contract SKILL.md relies on |
+| `tests/perf_ratios.rs` | Machine-independent complexity ratio assertions (regression gate) |
 
-| File | Purpose |
-|------|---------|
-| `tests/test_canonicalize.py` | Unit tests for engine primitives and pipeline behaviour |
-| `tests/test_uat.py` | End-to-end UAT: BEFORE→AFTER tables driven against the full `RULES` list |
+`tests/uat.rs` is the living specification for built-in rules. Each table row is
+a `(description, before, after)` triple; the description is printed on failure.
 
-`test_uat.py` is the living specification for built-in rules. Each table row is a
-`(description, before, after)` triple; pytest prints the description as the test ID,
-so failures are immediately human-readable.
+Two complementary e2e layers: `uat.rs` proves *what* gets canonicalized (the
+pipeline, called directly), while `cli.rs` proves the *binary delivers it
+correctly* (argv → exact stdout, empty stderr on success, exit 1 + message on a
+bad URL). `cli.rs` covers offline cases only; the `--online` path is exercised at
+the library level in `uat.rs` via the injected resolver.
 
-Tests import directly from `engine` and `rules` (via `pythonpath = ["scripts"]`
-in `pyproject.toml`). The `FollowRedirect` HTTP path is tested via
-`unittest.mock.patch("engine._http_resolve")`.
+The `FollowRedirect` HTTP path is tested by **dependency injection**: the
+pipeline takes the resolver as a parameter, so tests pass a stub closure instead
+of monkeypatching. Offline tests inject a resolver that panics if called — so an
+accidental network hit fails loudly rather than passing silently.

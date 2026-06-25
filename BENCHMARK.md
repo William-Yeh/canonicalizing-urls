@@ -1,222 +1,167 @@
-# Benchmark: _RuleIndex Performance
+# Benchmark: Rule Index Performance (Rust)
 
 Verifies the complexity claims in [DESIGN.md § Rule Indexing](DESIGN.md#rule-indexing)
-and the pipeline Furl fix, using ratio-based assertions that are
-**machine-independent**.
+using two complementary mechanisms:
+
+- **`tests/perf_ratios.rs`** — machine-independent *ratio* assertions that run
+  under `cargo test` and **fail the build on regression** (e.g. if an O(1)
+  lookup silently becomes O(R)).
+- **`benches/rule_index.rs`** — `criterion` statistical benchmarks producing
+  human-readable reports under `target/criterion/` and the numbers below.
 
 ---
 
 ## Goals
 
-1. Confirm **O(1) exact-host lookup** — `candidate_indices(host)` time is flat
-   as the number of non-matching `Host(...)` rules grows.
-2. Confirm **O(L) HostGlob matching** — a single merged regex alternation grows
-   slower than G individual `fnmatch.fnmatch()` calls. Compare stdlib `re`
-   (NFA) against `google-re2` (true DFA).
-3. Confirm **index build is O(R), separate from lookup O(1)** — the one-time
-   `_RuleIndex(rules)` cost grows with R while `candidate_indices()` stays flat.
-4. Confirm **pipeline Furl fix** — moving `Furl(url)` inside the candidate
-   guard reduces instantiation cost from O(R) to O(candidates) per
-   `canonicalize()` call.
+1. **O(1) exact-host lookup** — `candidate_indices(host)` time is flat as the
+   number of non-matching `Host(...)` rules grows.
+2. **O(L) HostGlob matching via `RegexSet`** — all `HostGlob` patterns merged
+   into one multi-pattern DFA; lookup grows sub-linearly in the number of glob
+   rules G (a single automaton pass, not G separate matches).
+3. **Index build is O(R), separate from lookup O(1)** — one-time `RuleIndex::new`
+   grows with R while `candidate_indices()` stays flat.
+4. **Pipeline parses only for candidate rules** — `canonicalize()` constructs
+   the working `Url` only when a rule is a candidate, not once per rule.
 
 ---
 
-## Design
+## The DFA merge: `RegexSet`
 
-### Ratio-based assertions (machine-independent)
+The Python version merged all `HostGlob` patterns into one regex *alternation*
+with named capture groups, then read back `m.groupdict()` to learn which glob
+matched — a workaround because stdlib `re` has no multi-pattern primitive.
 
-Absolute µs values vary by machine, Python version, and CPU load.
-All assertions are expressed as ratios:
+Rust's `regex` crate provides [`RegexSet`](https://docs.rs/regex/latest/regex/struct.RegexSet.html)
+natively: all patterns compile into **one combined automaton**, and
+`set.matches(host)` runs the host through it once, returning the indices of
+every matching pattern. This is the honest expression of "merge all globs into
+one DFA":
 
-| Term | Meaning | Threshold |
-|------|---------|-----------|
-| **flat** | time doesn't grow as input size increases | `max/min < 5×` across all data points |
-| **grows** | time scales with input size | `last/first > 10% of expected growth ratio` |
+- linear time in hostname length L, independent of the number of globs G;
+- no backtracking, no catastrophic blowup (guaranteed by the engine, not a flag);
+- no optional `google-re2` backend to install — the standard crate already is a
+  finite-automaton engine.
 
-A threshold of 10% of the expected linear growth is intentionally conservative —
-it survives slow machines, timer noise, and Python version differences, while
-still catching a genuine regression (e.g., accidentally making a lookup O(R)).
-
-### Benchmark structure
-
-Each benchmark:
-1. Iterates over a range of input sizes (R rules or G glob patterns)
-2. Measures the **indexed** path and a **naive** baseline at each size
-3. Collects all measurements, prints a table, then asserts ratios at the end
-
-### Synthetic rules
-
-Tests use synthetic rules whose hostnames never match the test URL
-(`www.youtube.com`), so all non-universal rules are skipped — this isolates
-the cost of the skip decision itself.
-
-```
-UNIVERSAL_RULE  = Rule(match=AnyHost(), ...)          # always a candidate
-exact_rules(R)  = R × Rule(match=Host("hostN.example.com"), ...)   # never match
-glob_rules(G)   = G × Rule(match=HostGlob("xN.*.net"), ...)        # never match
-```
-
-### Benchmark 1 — exact-host lookup O(1)
-
-Compares `_RuleIndex.candidate_indices(host)` (frozenset + dict lookup) against
-calling `rule.match.matches(f)` on every rule (O(R) scan).
-
-R values: 10, 100, 1000, 5000. Rule set: 1 universal + R exact-host rules.
-
-### Benchmark 2 — HostGlob merged regex O(L)
-
-Compares three approaches for matching a hostname against G glob patterns:
-
-- **stdlib `re`** — compiled alternation, NFA backend
-- **`google-re2`** — compiled alternation, true DFA backend (optional)
-- **naive `fnmatch`** — G separate `fnmatch.fnmatch()` calls, O(G·L)
-
-G values: 5, 20, 50, 100. Hostname: `m.example.com` (no match — worst-case).
-
-### Benchmark 3 — index build O(R) vs lookup O(1)
-
-Compares `_RuleIndex(rules)` (build cost, O(R)) against
-`index.candidate_indices(host)` (lookup cost, O(1)).
-
-R values: 50, 200, 1000, 5000.
-
-### Benchmark 4 — pipeline Furl fix
-
-Simulates the `canonicalize()` inner loop before and after the fix of moving
-`Furl(url)` inside the candidate guard. `Furl()` costs ~130 µs each, so
-O(R) instantiations dominate for large R.
-
-- **new** — `canonicalize()` with fix: 1 upfront parse + 1 per candidate
-- **old** — simulated pre-fix loop: 1 `Furl(url)` per rule regardless
-
-R values: 10, 50, 200, 500.
-
----
-
-## Execution
-
-```bash
-cd canonicalizing-urls
-
-# Without google-re2 (re2 column shows N/A):
-uv run --group dev python tests/perf_bench.py
-
-# With google-re2 (enables Benchmark 2 re2 column and assertion):
-uv run --group dev --group perf python tests/perf_bench.py
-
-# Via pytest (assertions become test failures):
-uv run --group dev --group perf pytest tests/perf_bench.py -v -s
-```
+`RuleIndex` keeps a parallel `glob_rule_ids: Vec<usize>` mapping each set-match
+index back to its rule index — replacing Python's `group_to_rule` string map.
 
 ---
 
 ## Results
 
-Results from a representative run (Apple M-series, Python 3.13, `google-re2` installed).
+Representative `cargo bench` run (Apple M-series, Rust 1.96, `--release`).
+criterion medians.
 
 ![Overview of all four benchmarks](figures/bench_overview.png)
 
-> Figures generated by `uv run skill/scripts/gen_figures.py`. All axes are log–log scale;
-> a gray dashed line shows the expected O(R) or O(G) reference slope.
+> Figures: `cargo run --example gen_figures --features figures`. Axes are log–log.
 
-### Benchmark 1 — exact-host lookup
+### Benchmark 1 — exact-host lookup (O(1) vs O(R))
 
 ![Benchmark 1](figures/bench1.png)
 
 ```
-    R   index lookup µs   naive .matches() µs   speedup
-─────  ────────────────  ────────────────────  ────────
-   10             0.317                 1.223      3.9×
-  100             0.443                10.640     24.0×
- 1000             0.453               108.146    238.8×
- 5000             0.405               543.770   1341.2×
-
-Assertions:
-  ✓  index lookup flat (max/min): 1.4× < 5×
-  ✓  naive grows with R (last/first, expect ~500×): 444.7× > 50×
+    R   index lookup   naive .matches()   speedup
+─────  ─────────────  ─────────────────  ────────
+   10        45.4 ns           26.3 ns      0.6×
+  100        44.7 ns          237.8 ns      5.3×
+ 1000        45.7 ns          2.321 µs     50.8×
+ 5000        45.4 ns         11.682 µs    257.3×
 ```
 
-### Benchmark 2 — HostGlob merged regex
+Index lookup is flat (~45 ns) regardless of R; the naive per-rule scan grows
+linearly to 11.7 µs at R=5000. (At R=10 the naive scan is faster — the index
+has a small fixed cost that only pays off once R exceeds ~20.)
+
+### Benchmark 2 — HostGlob `RegexSet` (O(L), ~flat in G)
 
 ![Benchmark 2](figures/bench2.png)
 
 ```
-    G     re µs      re2 µs   fnmatch µs   re2/re   fnmatch/re
-─────  ────────  ──────────  ───────────  ───────  ───────────
-    5     0.264       2.682        2.680    10.15×        10.1×
-   20     0.596       3.426        9.951     5.75×        16.7×
-   50     2.138       4.023       26.072     1.88×        12.2×
-  100     6.656       5.794       54.361     0.87×         8.2×
-
-Assertions:
-  ✓  fnmatch grows with G (last/first, expect ~20×): 20.3× > 5×
-  ✓  re2 grows less than fnmatch/3 (DFA vs O(G·L)): 2.2× < 7×
+    G   RegexSet candidate lookup
+─────  ─────────────────────────
+    5        60.4 ns
+   20        69.4 ns
+   50        81.1 ns
+  100       103.4 ns
 ```
 
-### Benchmark 3 — index build vs lookup
+Merging 5 → 100 glob patterns into one `RegexSet` grows the lookup only ~1.7×
+(60 → 103 ns) — sub-linear in G, because the host runs through a single
+combined automaton once rather than being tested against each pattern.
+
+### Benchmark 3 — index build O(R) vs lookup O(1)
 
 ![Benchmark 3](figures/bench3.png)
 
 ```
-    R    build µs   lookup µs   build/lookup ratio
-─────  ──────────  ──────────  ───────────────────
-   50        35.2       0.417                   84×
-  200       142.2       0.403                  353×
- 1000       747.0       0.449                 1663×
- 5000      4135.5       0.409                10112×
-
-Assertions:
-  ✓  build grows with R (last/first, expect ~100×): 117.4× > 10×
-  ✓  lookup flat (max/min): 1.1× < 5×
+    R     build      lookup
+─────  ─────────  ─────────
+   50    6.25 µs    45.0 ns
+  200   25.67 µs    46.0 ns
+ 1000  145.83 µs    44.7 ns
+ 5000  687.49 µs    45.0 ns
 ```
 
-### Benchmark 4 — pipeline Furl fix
+Build grows ~110× as R grows 100× (linear); lookup stays flat at ~45 ns.
+Because the index is built once per top-level `canonicalize()` call (and reused
+across `FollowRedirect` recursion), this O(R) cost is paid once, not per hop.
+For the real rule list (~16 rules), build is a few µs — negligible.
+
+### Benchmark 4 — pipeline `canonicalize()` over R rules
 
 ![Benchmark 4](figures/bench4.png)
 
 ```
-    R      new µs      old µs   speedup
-─────  ──────────  ──────────  ────────
-   10       302.7      1329.9      4.4×
-   50       270.1      5929.4     22.0×
-  200       301.0     23397.1     77.7×
-  500       391.1     61604.2    157.5×
-
-Assertions:
-  ✓  new pipeline flat (max/min): 1.4× < 5×
-  ✓  old grows with R (last/first, expect ~50×): 46.3× > 5×
+    R   canonicalize
+─────  ─────────────
+   10       2.35 µs
+   50       7.47 µs
+  200      27.50 µs
+  500      76.12 µs
 ```
+
+This grows with R because each rule still costs a `candidate_indices` set build
+plus a membership check. The optimization (parse the working URL only for
+*candidate* rules) still holds; for the real ~16-rule list a full canonicalize
+is ~10 µs (see below).
 
 ---
 
-## Insights
+## Head-to-head: Python vs Rust
 
-**Index lookup is sub-microsecond regardless of R.**
-`candidate_indices()` measures ~0.4 µs across R=10 to R=5000 — a frozenset
-membership test plus one dict lookup. The O(R) naive scan reaches 544 µs at
-R=5000, a 1341× gap.
+Same algorithm, same rules, measured **in-process** (the engine function, not CLI
+startup) on identical inputs, warm. Python via `time.perf_counter` loops; Rust
+via criterion. Apple M-series.
 
-**`Furl()` at ~130 µs is the dominant per-rule cost in the pipeline.**
-This is why the Benchmark 4 fix matters: before the fix, each `canonicalize()`
-call instantiated `Furl(url)` once per rule in the loop regardless of the
-index. At R=500, that was 500 × 130 µs = 65 ms per call. After the fix,
-`Furl()` is called only for candidate rules — ~1 instantiation for a typical
-non-matching URL, keeping the cost flat at ~300 µs.
+| Operation | Python | Rust | Speedup |
+|-----------|-------:|-----:|--------:|
+| `candidate_indices` (R=5000 exact rules) | 0.18 µs | 0.045 µs | **4×** |
+| naive match-all scan (R=5000) | 266 µs | 11.7 µs | 23× |
+| index build (R=5000) | 1678 µs | 687 µs | 2.4× |
+| **`canonicalize()` real RULES, 1 URL** | **294 µs** | **10.5 µs** | **~28×** |
 
-**stdlib `re` and `google-re2` cross over around G ≈ 100.**
-`re2` has higher fixed DFA overhead (~2.7 µs at G=5 vs `re`'s 0.26 µs) but
-near-flat scaling. Stdlib `re` is faster for small G but grows as the NFA
-explores more alternations. For the current RULES list (1 HostGlob pattern),
-`re` is the faster backend. `re2` pays off when many `HostGlob` rules are
-added.
+The real-world figure is the one that matters: a full canonicalize over the
+built-in rule list is **~28× faster** in Rust. Both implementations preserve the
+same O(1)-lookup / O(R)-build complexity; Rust wins on constant factors
+(no interpreter, no `furl` per-parse, compiled regexes shared warm).
 
-**Index build is O(R) and is the only part that actually grows.**
-For the real RULES list (~12 rules), the build takes ~5 µs — negligible.
-At R=5000 it reaches ~4 ms. Because `_index` is passed through recursive
-`FollowRedirect` calls, this cost is paid once per top-level `canonicalize()`
-call, not once per redirect hop.
+> **A note on how this number was earned.** The first Rust cut was accidentally
+> *slower* than Python (431 µs) — it recompiled regexes per call and, worse,
+> returned **cloned** `Regex` handles whose internal DFA cache is cold on every
+> clone, so each `.find()` rebuilt it (~tens of µs). The fix: memoize compiled
+> regexes and share them by `Arc` (warm cache preserved). `tests/perf_ratios.rs`
+> now guards this permanently — `regex_compiled_once_not_per_call` fails the build
+> if regex-using rules drift more than 8× slower than params-only rules. The
+> head-to-head benchmark is what surfaced the regression; without it, the port
+> would have shipped slower than the Python it replaced.
 
-**`validate_rules()` is unaffected.**
-It runs once at import time, is O(K²) in the number of `KeepParams` rules
-(currently K=2), and uses no `Furl`, no regex, and no index — none of the
-bottlenecks identified here apply to it.
+---
+
+## Reproduce
+
+```bash
+cargo bench                              # criterion reports → target/criterion/
+cargo test --test perf_ratios -- --nocapture   # ratio assertions (CI gate)
+cargo run --example gen_figures --features figures # regenerate figures/
+```

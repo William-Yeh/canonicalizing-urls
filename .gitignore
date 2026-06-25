@@ -1,1 +1,12 @@
 docs/
+
+# Rust
+/target/
+skill/bin/
+
+# legacy Python (being removed)
+.pytest_cache/
+__pycache__/
+
+# Python virtualenv (legacy)
+.venv/

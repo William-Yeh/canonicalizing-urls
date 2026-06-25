@@ -1,0 +1,50 @@
+[package]
+name = "canonicalize"
+version = "0.1.0"
+edition = "2021"
+description = "Canonicalize URLs — strip tracking params, unwrap redirects, normalize hosts, extract canonical paths, resolve opaque short-links."
+license = "Apache-2.0"
+repository = "https://github.com/William-Yeh/canonicalizing-urls"
+
+[[bin]]
+name = "canonicalize"
+path = "src/main.rs"
+
+[lib]
+name = "canonicalize"
+path = "src/lib.rs"
+
+# Dev-only figure renderer. An example (not a [[bin]]) so `dist` won't package
+# it; the `figures` feature keeps plotters out of the default build.
+[[example]]
+name = "gen_figures"
+required-features = ["figures"]
+
+[dependencies]
+url = "2"
+regex = "1"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["blocking"] }
+tl = "0.7"
+plotters = { version = "0.3", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+assert_cmd = "2"
+predicates = "3"
+
+[features]
+figures = ["dep:plotters"]
+
+[[bench]]
+name = "rule_index"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

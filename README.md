@@ -43,10 +43,22 @@ Copy the skill directory to your agent's skill folder:
 
 ### CLI
 
+The skill ships a compiled `canonicalize` binary (downloaded per-platform on
+first use by `skill/scripts/install.sh`, or built from source):
+
 ```bash
-uv run skill/scripts/canonicalize.py <url>
-uv run skill/scripts/canonicalize.py --online <url>   # follow opaque short-links
-uv run skill/scripts/canonicalize.py --probe <url>    # discover rules for non-canonical URLs
+canonicalize <url>
+canonicalize --online <url>   # follow opaque short-links
+canonicalize --probe <url>    # discover rules for non-canonical URLs
+```
+
+Output contract: stdout is the canonical URL (single line); diagnostics go to
+stderr; exit 0 on success, exit 1 on a hard error (e.g. unparseable URL).
+
+For local development:
+
+```bash
+cargo run -- <url>
 ```
 
 ## Built-in rules
@@ -76,17 +88,35 @@ uv run skill/scripts/canonicalize.py --probe <url>    # discover rules for non-c
 ## Testing
 
 ```bash
-uv run --group dev pytest tests/ -v
+cargo test
 ```
 
-`tests/test_uat.py` contains a human-readable BEFORE→AFTER table that acts as
-both the regression suite and the acceptance spec for all built-in rules.
+`tests/uat.rs` contains a human-readable BEFORE→AFTER table that acts as both
+the regression suite and the acceptance spec for all built-in rules.
+`tests/cli.rs` is a process-level e2e check of the compiled binary's
+stdout/exit-code contract, and `tests/perf_ratios.rs` guards the complexity
+contract (O(1)/O(R)).
 
 For performance benchmarks and complexity verification, see [BENCHMARK.md](BENCHMARK.md).
 
 ## Requirements
 
-- `uv` (for running the script with inline deps)
+- **At run time:** none — the skill fetches a prebuilt binary for your platform.
+- **To build from source:** a Rust toolchain (`rustup`, stable).
+
+## Releasing (maintainers)
+
+Releases are built and published by [`dist`](https://opensource.axo.dev/cargo-dist/)
+(config in `dist-workspace.toml`). Push a version tag and CI builds the four
+target platforms, publishing a `.tar.xz` archive + `.sha256` checksum per target
+to the GitHub Release:
+
+```bash
+git tag v0.1.0 && git push --tags
+```
+
+`skill/scripts/install.sh` then downloads, checksum-verifies, and extracts the
+matching binary on first use. See [DESIGN.md § Distribution & Release](DESIGN.md#distribution--release).
 
 ## License
 
