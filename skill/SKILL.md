@@ -42,13 +42,17 @@ When the user asks to canonicalize a URL:
 ## Adding a new rule
 
 When the binary returns unchanged output but the URL is clearly non-canonical:
-1. `"$SKILL_DIR/bin/canonicalize" --probe <url>` — review the suggested `rule(...)`
+1. `"$SKILL_DIR/bin/canonicalize" --probe <url>` — review the suggested `rule(...)`.
+   For a host-rewriting rule, probe also prints an ordering hint on stderr,
+   e.g. `↳ insert before rules[3] (HostGlob("m.*.com"))` — use that index.
 2. Ask the user: generalize to a pattern, or keep domain-specific?
 3. Add a failing UAT row to `tests/uat.rs` (BEFORE→AFTER)
 4. Add the confirmed `rule(...)` to `rules()` in `src/rules.rs`
-   - Insert **before** `HostGlob` rules if the rule rewrites the host for a specific domain
-     (the specific `Host(...)` rule must fire first to prevent the generic glob from also running;
-     `validate_rules` enforces this at startup/test time)
+   - Place it at the index the probe hint named. The rule of thumb: a specific
+     `Host(...)` rule that rewrites the host must come **before** any `HostGlob`
+     that matches it (else the glob fires first and eclipses it).
+   - You don't have to get this right by hand: `validate_rules` (run by `cargo test`)
+     fails the build if a rule is misordered and names the exact target index to move it to.
    - Otherwise insert after similar-domain rules
    - `RewritePath` uses Rust regex replacement syntax: `$1`, `$2` (not `\1`, `\2`)
 5. `cargo run -- <original_url>` — verify output

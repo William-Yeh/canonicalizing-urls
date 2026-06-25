@@ -55,6 +55,10 @@ canonicalize --probe <url>    # discover rules for non-canonical URLs
 Output contract: stdout is the canonical URL (single line); diagnostics go to
 stderr; exit 0 on success, exit 1 on a hard error (e.g. unparseable URL).
 
+For `--probe`, stdout is a paste-ready `rule(...)` block; for a host-rewriting
+rule it also prints where to insert it (`↳ insert before rules[N]`) so it lands
+in the correct order in `src/rules.rs`.
+
 For local development:
 
 ```bash

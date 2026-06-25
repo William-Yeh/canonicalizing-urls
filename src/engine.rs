@@ -577,6 +577,10 @@ pub fn validate_rules(rules: &[Rule]) -> Result<(), String> {
     }
 
     // --- Check 2: eclipsed host-rewriting rules ---
+    // Detection and the suggested fix share one predicate: a host-rewriting
+    // `Host(...)` rule is eclipsed iff an *earlier* host-rewriting `HostGlob`
+    // matches its host. `suggest_position_for_hosts` over `rules[..i]` IS that
+    // check — `Some(target)` means "eclipsed; move it before rules[target]".
     for (i, r) in rules.iter().enumerate() {
         if !is_host_rewriting(r) {
             continue;
@@ -585,26 +589,61 @@ pub fn validate_rules(rules: &[Rule]) -> Result<(), String> {
         if hosts.contains("*") {
             continue;
         }
-        for earlier in &rules[..i] {
-            let Matcher::HostGlob(pat) = &earlier.matcher else {
-                continue;
+        if let Some(target) = suggest_position_for_hosts(&hosts, &rules[..i]) {
+            let Matcher::HostGlob(pat) = &rules[target].matcher else {
+                unreachable!("suggest_position_for_hosts only returns HostGlob indices")
             };
-            if !is_host_rewriting(earlier) {
-                continue;
-            }
-            for host in &hosts {
-                if glob_match(pat, host) {
-                    return Err(format!(
-                        "rules[{i}] (Host-specific, rewrites host for {host:?}) is eclipsed by an \
-                         earlier HostGlob({pat:?}) — the glob fires first and changes the host, so \
-                         the specific rule is never reached. Move it before the glob."
-                    ));
-                }
-            }
+            let host = hosts
+                .iter()
+                .find(|h| glob_match(pat, h))
+                .expect("a host matched the glob");
+            return Err(format!(
+                "rules[{i}] (Host-specific, rewrites host for {host:?}) is eclipsed by an \
+                 earlier HostGlob({pat:?}) — the glob fires first and changes the host, so \
+                 the specific rule is never reached. Move it to rules[{target}] (before the glob)."
+            ));
         }
     }
 
     Ok(())
+}
+
+/// Suggest the index at which `new_rule` should be inserted into `rules` to
+/// satisfy the specific-before-glob ordering invariant.
+///
+/// A host-rewriting `Host("x")` rule must precede any `HostGlob` rule that also
+/// rewrites the host and whose pattern matches `"x"` (otherwise the glob fires
+/// first and eclipses the specific rule — see [`validate_rules`] check 2).
+///
+/// Returns `Some(n)` = "insert before `rules[n]`" when such a constraint exists,
+/// or `None` when `new_rule` has no ordering constraint (it can be appended
+/// anywhere, e.g. a param-only rule, or a host-rewrite with no matching glob).
+pub fn suggest_position(new_rule: &Rule, rules: &[Rule]) -> Option<usize> {
+    if !is_host_rewriting(new_rule) {
+        return None;
+    }
+    let hosts = hosts_from_matcher(&new_rule.matcher);
+    if hosts.contains("*") {
+        return None; // unconstrained matcher — ordering not analysable
+    }
+    suggest_position_for_hosts(&hosts, rules)
+}
+
+/// Core of [`suggest_position`]: index of the earliest existing host-rewriting
+/// `HostGlob` whose pattern matches any host in `hosts`, or `None` if none.
+///
+/// Callers that already know the host(s) a rule would rewrite (e.g. the probe)
+/// can ask this directly without constructing a [`Rule`].
+pub fn suggest_position_for_hosts(hosts: &HashSet<String>, rules: &[Rule]) -> Option<usize> {
+    rules.iter().position(|r| {
+        if !is_host_rewriting(r) {
+            return false;
+        }
+        let Matcher::HostGlob(pat) = &r.matcher else {
+            return false;
+        };
+        hosts.iter().any(|h| glob_match(pat, h))
+    })
 }
 
 #[cfg(test)]
@@ -1027,6 +1066,67 @@ mod tests {
         ];
         let err = validate_rules(&rules).unwrap_err();
         assert!(err.contains("eclipsed"));
+    }
+
+    #[test]
+    fn validate_rules_eclipse_error_names_target_index() {
+        // The misplaced rule is at index 2; it should move before the glob at index 1.
+        let rules = vec![
+            rule(AnyHost(), vec![strip_params(&["utm_*"])]),
+            rule(HostGlob("m.*.com"), vec![rewrite_host_prefix("m.", "www.")]),
+            rule(Host("m.x.com"), vec![rewrite_host("x.com")]),
+        ];
+        let err = validate_rules(&rules).unwrap_err();
+        // Names both the offending rule and the exact target slot.
+        assert!(err.contains("rules[2]"), "names offending rule: {err}");
+        assert!(err.contains("rules[1]"), "names target index: {err}");
+    }
+
+    // --- suggest_position ---
+
+    #[test]
+    fn suggest_position_before_conflicting_glob() {
+        // A new specific host-rewrite must be inserted before the matching glob.
+        let rules = vec![
+            rule(AnyHost(), vec![strip_params(&["utm_*"])]), // 0
+            rule(HostGlob("m.*.com"), vec![rewrite_host_prefix("m.", "www.")]), // 1
+            rule(Host("medium.com"), vec![strip_params(&["x"])]), // 2
+        ];
+        let new = rule(Host("m.foo.com"), vec![rewrite_host("foo.com")]);
+        assert_eq!(suggest_position(&new, &rules), Some(1));
+    }
+
+    #[test]
+    fn suggest_position_none_when_no_constraint() {
+        // A plain param-stripping rule has no ordering constraint → None (append anywhere).
+        let rules = vec![
+            rule(HostGlob("m.*.com"), vec![rewrite_host_prefix("m.", "www.")]),
+            rule(Host("medium.com"), vec![strip_params(&["x"])]),
+        ];
+        let new = rule(Host("dev.to"), vec![strip_params(&["y"])]);
+        assert_eq!(suggest_position(&new, &rules), None);
+    }
+
+    #[test]
+    fn suggest_position_none_when_glob_does_not_match() {
+        // Host-rewrite rule, but no earlier glob matches its host → no constraint.
+        let rules = vec![rule(
+            HostGlob("m.*.org"),
+            vec![rewrite_host_prefix("m.", "www.")],
+        )];
+        let new = rule(Host("m.foo.com"), vec![rewrite_host("foo.com")]);
+        assert_eq!(suggest_position(&new, &rules), None);
+    }
+
+    #[test]
+    fn suggest_position_earliest_of_multiple_globs() {
+        // Two matching globs → must go before the *earliest* one.
+        let rules = vec![
+            rule(HostGlob("m.*.com"), vec![rewrite_host_prefix("m.", "www.")]), // 0
+            rule(HostGlob("m.foo.*"), vec![rewrite_host_prefix("m.", "www.")]), // 1
+        ];
+        let new = rule(Host("m.foo.com"), vec![rewrite_host("foo.com")]);
+        assert_eq!(suggest_position(&new, &rules), Some(0));
     }
 
     #[test]

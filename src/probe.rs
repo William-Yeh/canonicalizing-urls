@@ -6,8 +6,28 @@
 
 use std::io::Read;
 
+use std::collections::HashSet;
+
+use crate::engine::{suggest_position_for_hosts, Matcher, Rule};
+use crate::rules::rules;
 use crate::url_model::Url;
 use regex::Regex;
+
+/// For a rule that rewrites the host to `host`, compute where it must be inserted
+/// in `rules` (before any conflicting `HostGlob`) and return a human-readable
+/// note. Pure: takes the rule list so tests can inject one. Call only when the
+/// probe actually suggested a host rewrite.
+///
+/// Returns `None` when there is no ordering constraint (append anywhere).
+fn slot_note(host: &str, rules: &[Rule]) -> Option<String> {
+    let hosts = HashSet::from([host.to_string()]);
+    let n = suggest_position_for_hosts(&hosts, rules)?;
+    // suggest_position_for_hosts only ever returns the index of a HostGlob rule.
+    let Matcher::HostGlob(p) = &rules[n].matcher else {
+        unreachable!("suggest_position_for_hosts only returns HostGlob indices")
+    };
+    Some(format!("insert before rules[{n}] (HostGlob({p:?}))"))
+}
 
 /// Canonical signals extracted from a fetched page.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -135,6 +155,8 @@ pub fn probe<R: Fn(&str) -> String>(url: &str, _resolve: &R) {
         return;
     };
     let mut suggestions: Vec<String> = Vec::new();
+    // Ordering hint, computed when (and only when) a host rewrite is suggested.
+    let mut ordering_note: Option<String> = None;
 
     // --- 1. Params ---
     if !original.args.is_empty() {
@@ -171,6 +193,9 @@ pub fn probe<R: Fn(&str) -> String>(url: &str, _resolve: &R) {
             if same_content(&base, &fetch_signals(&test.to_string())) {
                 eprintln!("  rewrite host → {www_host:?} ✓");
                 suggestions.push(format!("rewrite_host({www_host:?})"));
+                // The suggested rule's matcher will be Host(original host), so the
+                // ordering constraint is computed against that host.
+                ordering_note = slot_note(host, &rules());
             }
         }
     }
@@ -206,12 +231,37 @@ pub fn probe<R: Fn(&str) -> String>(url: &str, _resolve: &R) {
         println!("    Host({host:?}),");
         println!("    vec![{}],", suggestions.join(", "));
         println!("),");
+        // Ordering hint (stderr — advisory, keeps stdout = paste-ready block).
+        if let Some(note) = &ordering_note {
+            eprintln!("  ↳ {note}");
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::{rewrite_host_prefix, rule, strip_params, AnyHost, HostGlob};
+
+    #[test]
+    fn slot_note_points_before_conflicting_glob() {
+        let rules = vec![
+            rule(AnyHost(), vec![strip_params(&["utm_*"])]),
+            rule(HostGlob("m.*.com"), vec![rewrite_host_prefix("m.", "www.")]),
+        ];
+        let note = slot_note("m.foo.com", &rules).expect("constraint exists");
+        assert!(note.contains("rules[1]"), "names target index: {note}");
+        assert!(note.contains("m.*.com"), "names the glob: {note}");
+    }
+
+    #[test]
+    fn slot_note_none_when_no_matching_glob() {
+        let rules = vec![rule(
+            HostGlob("m.*.org"),
+            vec![rewrite_host_prefix("m.", "www.")],
+        )];
+        assert_eq!(slot_note("m.foo.com", &rules), None);
+    }
 
     fn sig(
         final_url: &str,
